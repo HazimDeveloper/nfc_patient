@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "637167634390",
+    "project_id": "nfcpatient-9e364",
+    "storage_bucket": "nfcpatient-9e364.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:637167634390:android:0a90d7e7207718db384677",
+        "android_client_info": {
+          "package_name": "com.example.nfc_patient_registration"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC7QA2eVV55VjU-lOQuKMoJZ0yQv_urjf4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
