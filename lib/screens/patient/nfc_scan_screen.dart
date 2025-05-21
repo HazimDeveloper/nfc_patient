@@ -31,6 +31,7 @@ class _NFCScanScreenState extends State<NFCScanScreen> with SingleTickerProvider
   String _statusMessage = '';
   bool _success = false;
   bool _error = false;
+  String? _detailedErrorMessage;
   Map<String, dynamic>? _scannedData;
   
   late AnimationController _animationController;
@@ -60,6 +61,7 @@ class _NFCScanScreenState extends State<NFCScanScreen> with SingleTickerProvider
   @override
   void dispose() {
     _animationController.dispose();
+    NFCService.stopSession(); // Make sure to stop any active session
     super.dispose();
   }
 
@@ -83,6 +85,7 @@ class _NFCScanScreenState extends State<NFCScanScreen> with SingleTickerProvider
         _error = false;
         _success = false;
         _scannedData = null;
+        _detailedErrorMessage = null;
         
         switch (widget.action) {
           case NFCAction.read:
@@ -119,6 +122,7 @@ class _NFCScanScreenState extends State<NFCScanScreen> with SingleTickerProvider
     } catch (e) {
       setState(() {
         _statusMessage = 'Error: ${e.toString()}';
+        _detailedErrorMessage = e.toString();
         _error = true;
         _isScanning = false;
       });
@@ -161,7 +165,8 @@ class _NFCScanScreenState extends State<NFCScanScreen> with SingleTickerProvider
         _success = false;
         _error = true;
         _isScanning = false;
-        _statusMessage = 'Error reading card: ${e.toString()}';
+        _statusMessage = 'Error reading card';
+        _detailedErrorMessage = e.toString();
       });
     }
   }
@@ -189,7 +194,8 @@ class _NFCScanScreenState extends State<NFCScanScreen> with SingleTickerProvider
         _success = false;
         _error = true;
         _isScanning = false;
-        _statusMessage = 'Error writing to card: ${e.toString()}';
+        _statusMessage = 'Error writing to card';
+        _detailedErrorMessage = e.toString();
       });
       
       // Call onWriteComplete callback with failure
@@ -222,7 +228,8 @@ class _NFCScanScreenState extends State<NFCScanScreen> with SingleTickerProvider
         _success = false;
         _error = true;
         _isScanning = false;
-        _statusMessage = 'Error formatting card: ${e.toString()}';
+        _statusMessage = 'Error formatting card';
+        _detailedErrorMessage = e.toString();
       });
       
       // Call onWriteComplete callback with failure
@@ -264,6 +271,7 @@ class _NFCScanScreenState extends State<NFCScanScreen> with SingleTickerProvider
       _success = false;
       _scannedData = null;
       _statusMessage = '';
+      _detailedErrorMessage = null;
     });
     
     _startNFCOperation();
@@ -278,177 +286,201 @@ class _NFCScanScreenState extends State<NFCScanScreen> with SingleTickerProvider
               ? 'Scan Patient Card'
               : widget.action == NFCAction.write
                   ? 'Write to Card'
-                  : 'Format Card',style: TextStyle(color: Colors.white)
+                  : 'Format Card',
         ),
         centerTitle: true,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // NFC animation
-            if (_isScanning)
-              ScaleTransition(
-                scale: _animation,
-                child: Container(
-                  width: 200,
-                  height: 200,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // NFC animation
+              if (_isScanning)
+                ScaleTransition(
+                  scale: _animation,
+                  child: Container(
+                    width: 200,
+                    height: 200,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).primaryColor.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.contactless,
+                      size: 100,
+                      color: Theme.of(context).primaryColor,
+                    ),
+                  ),
+                )
+              else if (_success)
+                Container(
+                  width: 120,
+                  height: 120,
                   decoration: BoxDecoration(
-                    color: Colors.teal.withOpacity(0.1),
+                    color: Colors.green.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.check_circle,
+                    size: 80,
+                    color: Colors.green,
+                  ),
+                )
+              else if (_error)
+                Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.error,
+                    size: 80,
+                    color: Colors.red,
+                  ),
+                )
+              else
+                Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
                     Icons.contactless,
-                    size: 100,
-                    color: Colors.teal,
+                    size: 80,
+                    color: Colors.grey,
                   ),
                 ),
-              )
-            else if (_success)
-              Container(
-                width: 120,
-                height: 120,
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.check_circle,
-                  size: 80,
-                  color: Colors.green,
-                ),
-              )
-            else if (_error)
-              Container(
-                width: 120,
-                height: 120,
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.error,
-                  size: 80,
-                  color: Colors.red,
-                ),
-              )
-            else
-              Container(
-                width: 120,
-                height: 120,
-                decoration: BoxDecoration(
-                  color: Colors.grey.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.contactless,
-                  size: 80,
-                  color: Colors.grey,
-                ),
-              ),
-            
-            SizedBox(height: 24),
-            
-            // Status message
-            Text(
-              _statusMessage,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: _error
-                    ? Colors.red
-                    : _success
-                        ? Colors.green
-                        : Colors.black,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            
-            SizedBox(height: 24),
-            
-            // Display scanned data if available
-            if (_scannedData != null && _success) ...[
+              
+              SizedBox(height: 24),
+              
+              // Status message
               Text(
-                'Card Information',
+                _statusMessage,
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 18,
                   fontWeight: FontWeight.bold,
+                  color: _error
+                      ? Colors.red
+                      : _success
+                          ? Colors.green
+                          : Colors.black,
                 ),
+                textAlign: TextAlign.center,
               ),
-              SizedBox(height: 8),
-              Container(
-                padding: EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: _scannedData!.entries.map((entry) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4.0),
-                      child: Row(
-                        children: [
-                          Text(
-                            '${entry.key}:',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              '${entry.value}',
-                              style: TextStyle(
-                                color: Colors.black87,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-            ],
-            
-            SizedBox(height: 32),
-            
-            // Action buttons
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (_success || _error)
-                  ElevatedButton.icon(
-                    onPressed: _resetAndTryAgain,
-                    icon: Icon(Icons.refresh),
-                    label: Text('Try Again'),
-                    style: ElevatedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                    ),
+              
+              // Detailed error message if available
+              if (_detailedErrorMessage != null && _error) ...[
+                SizedBox(height: 8),
+                Text(
+                  _detailedErrorMessage!,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.red[700],
                   ),
-                
-                SizedBox(width: 16),
-                
-                if (_success || _error)
-                  OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: Text('Done'),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                    ),
-                  ),
+                  textAlign: TextAlign.center,
+                ),
               ],
-            ),
-          ],
+              
+              SizedBox(height: 24),
+              
+              // Display scanned data if available
+              if (_scannedData != null && _success) ...[
+                Text(
+                  'Card Information',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: 8),
+                Expanded(
+                  child: Container(
+                    padding: EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: ListView(
+                      children: _scannedData!.entries.map((entry) {
+                        // Skip large or complex values
+                        if (entry.value is Map || entry.value is List) {
+                          return SizedBox.shrink();
+                        }
+                        
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4.0),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${entry.key}:',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '${entry.value}',
+                                  style: TextStyle(
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ] else if (!_isScanning) 
+                // Fixed: Using Spacer() instead of Expanded
+                Spacer(),
+              
+              // Action buttons
+              if (_success || _error)
+                Padding(
+                  padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: _resetAndTryAgain,
+                        icon: Icon(Icons.refresh),
+                        label: Text('Try Again'),
+                        style: ElevatedButton.styleFrom(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 12,
+                          ),
+                        ),
+                      ),
+                      
+                      SizedBox(width: 16),
+                      
+                      OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: Text('Done'),
+                        style: OutlinedButton.styleFrom(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

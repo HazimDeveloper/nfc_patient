@@ -68,7 +68,6 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
         _statusMessage = 'Place NFC card on the back of your device';
       });
       
-      // Use async/await correctly and implement proper error handling
       try {
         final result = await NFCService.readNFC();
         
@@ -84,17 +83,6 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
         
         // Debug output
         debugPrint('NFC Read Result: $result');
-        
-        // Check for error in the result
-        if (result.containsKey('error')) {
-          setState(() {
-            _statusMessage = 'Failed to read card';
-            _detailedErrorMessage = result['error'];
-            _error = true;
-            _isScanning = false;
-          });
-          return;
-        }
         
         // Extract serial number with priority order
         String? serialNumber;
@@ -229,13 +217,13 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                     width: 200,
                     height: 200,
                     decoration: BoxDecoration(
-                      color: Colors.teal.withOpacity(0.1),
+                      color: Theme.of(context).primaryColor.withOpacity(0.1),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
                       Icons.contactless,
                       size: 100,
-                      color: Colors.teal,
+                      color: Theme.of(context).primaryColor,
                     ),
                   ),
                 )
