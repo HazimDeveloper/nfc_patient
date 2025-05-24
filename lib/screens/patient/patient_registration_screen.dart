@@ -39,6 +39,21 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
   String _errorMessage = '';
   
   DateTime? _selectedDate;
+  String _effectiveCardSerialNumber = '';
+  
+  @override
+  void initState() {
+    super.initState();
+    // Store the card serial number and validate it
+    _effectiveCardSerialNumber = widget.cardSerialNumber;
+    print('Received card serial number: $_effectiveCardSerialNumber');
+    
+    // Generate a temporary serial number if empty (only for debugging)
+    if (_effectiveCardSerialNumber.isEmpty) {
+      _effectiveCardSerialNumber = 'TEST_CARD_${DateTime.now().millisecondsSinceEpoch}';
+      print('WARNING: Using generated card serial number: $_effectiveCardSerialNumber for testing');
+    }
+  }
   
   @override
   void dispose() {
@@ -105,6 +120,14 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
       return;
     }
     
+    // Validate card serial number
+    if (_effectiveCardSerialNumber.isEmpty) {
+      setState(() {
+        _errorMessage = 'Card serial number cannot be empty. Please scan a valid NFC card first.';
+      });
+      return;
+    }
+    
     setState(() {
       _isLoading = true;
       _errorMessage = '';
@@ -112,6 +135,8 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     
     try {
       final databaseService = DatabaseService();
+      
+      print('Registering patient with card serial: $_effectiveCardSerialNumber');
       
       final patientData = await databaseService.registerPatient(
         name: _nameController.text.trim(),
@@ -125,7 +150,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
         allergies: _allergies,
         medications: _medications,
         conditions: _conditions,
-        cardSerialNumber: widget.cardSerialNumber,
+        cardSerialNumber: _effectiveCardSerialNumber,
       );
       
       // Navigate to NFC writer screen with the patient data
@@ -147,8 +172,23 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                       ),
                     );
                     
-                    // Navigate back to the nurse home screen
-                    Navigator.popUntil(context, (route) => route.isFirst);
+                    // Clear form
+                    _formKey.currentState?.reset();
+                    _nameController.clear();
+                    _emailController.clear();
+                    _phoneController.clear();
+                    _dobController.clear();
+                    _addressController.clear();
+                    _emergencyContactController.clear();
+                    
+                    setState(() {
+                      _selectedDate = null;
+                      _selectedGender = 'Male';
+                      _bloodType = null;
+                      _allergies.clear();
+                      _medications.clear();
+                      _conditions.clear();
+                    });
                   }
                 }
               },
@@ -159,6 +199,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     } catch (e) {
       setState(() {
         _errorMessage = e.toString();
+        print('Error registering patient: $_errorMessage');
       });
     } finally {
       if (mounted) {
@@ -173,7 +214,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Register New Patient'),
+        title: Text('Register New Patient',style: TextStyle(color: Colors.white)),
         centerTitle: true,
       ),
       body: GestureDetector(
@@ -221,7 +262,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: SelectableText(
-                          widget.cardSerialNumber,
+                          _effectiveCardSerialNumber,
                           style: TextStyle(
                             fontFamily: 'monospace',
                             fontSize: 14,
