@@ -55,6 +55,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
           _statusMessage = 'NFC is not available on this device';
           _error = true;
           _isScanning = false;
+          _detailedErrorMessage = 'This device does not support NFC or NFC is disabled';
         });
         return;
       }
@@ -74,9 +75,10 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
         // Handle the case when result is null
         if (result == null) {
           setState(() {
-            _statusMessage = 'No card detected';
+            _statusMessage = 'No card detected or scan failed';
             _error = true;
             _isScanning = false;
+            _detailedErrorMessage = 'Please try again and ensure the card is properly positioned';
           });
           return;
         }
@@ -99,10 +101,16 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
         else if (result.containsKey('data') && result['data'] != null) {
           serialNumber = result['data'].toString();
         }
-        // If no usable data found
+        // If no usable data found, generate one based on tag discovery
         else {
-          // Use a timestamp as fallback
-          serialNumber = 'CARD-${DateTime.now().millisecondsSinceEpoch}';
+          // Use a timestamp-based ID as fallback
+          serialNumber = 'NFC-${DateTime.now().millisecondsSinceEpoch}';
+          debugPrint('Generated fallback serial number: $serialNumber');
+        }
+        
+        // Ensure serial number is not empty
+        if (serialNumber.isEmpty) {
+          serialNumber = 'NFC-${DateTime.now().millisecondsSinceEpoch}';
         }
         
         setState(() {
@@ -112,6 +120,9 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
           _isScanning = false;
           _statusMessage = 'Card scanned successfully';
         });
+        
+        debugPrint('Final card serial number: $_cardSerialNumber');
+        
       } catch (e) {
         debugPrint('Error during NFC reading process: $e');
         setState(() {
@@ -128,7 +139,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
         _success = false;
         _error = true;
         _isScanning = false;
-        _statusMessage = 'Error reading card';
+        _statusMessage = 'Error initializing NFC';
         _detailedErrorMessage = e.toString();
       });
       
@@ -156,21 +167,41 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
   
   // Navigate to patient registration with the card serial number
   void _proceedToRegistration() {
-    if (_cardSerialNumber != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PatientRegistrationScreen(cardSerialNumber: _cardSerialNumber!),
+    final effectiveSerialNumber = _cardSerialNumber ?? 'MANUAL-${DateTime.now().millisecondsSinceEpoch}';
+    
+    debugPrint('Proceeding to registration with serial: $effectiveSerialNumber');
+    
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PatientRegistrationScreen(
+          cardSerialNumber: effectiveSerialNumber,
         ),
-      );
-    }
+      ),
+    );
+  }
+  
+  // Proceed without NFC card (manual entry)
+  void _proceedWithoutCard() {
+    final manualSerialNumber = 'MANUAL-${DateTime.now().millisecondsSinceEpoch}';
+    
+    debugPrint('Proceeding without NFC card, using manual serial: $manualSerialNumber');
+    
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PatientRegistrationScreen(
+          cardSerialNumber: manualSerialNumber,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('NFC Card Registration'),
+        title: Text('NFC Card Registration', style: TextStyle(color: Colors.white)),
         centerTitle: true,
       ),
       body: Center(
@@ -197,7 +228,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                     ),
                     SizedBox(height: 8),
                     Text(
-                      'Before registering a new patient, please scan their NFC card to get the card serial number.',
+                      'Before registering a new patient, you can scan their NFC card to get the card serial number, or proceed without scanning.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 16,
@@ -290,13 +321,21 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
               // Detailed error message if available
               if (_detailedErrorMessage != null && _error) ...[
                 SizedBox(height: 8),
-                Text(
-                  _detailedErrorMessage!,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.red[700],
+                Container(
+                  padding: EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.withOpacity(0.3)),
                   ),
-                  textAlign: TextAlign.center,
+                  child: Text(
+                    _detailedErrorMessage!,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.red[700],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
                 ),
               ],
               
@@ -307,17 +346,30 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                 Container(
                   padding: EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Colors.grey.withOpacity(0.1),
+                    color: Colors.green.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.green.withOpacity(0.3)),
                   ),
                   child: Column(
                     children: [
-                      Text(
-                        'Card Serial Number:',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.check_circle,
+                            color: Colors.green,
+                            size: 20,
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            'Card Serial Number:',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: Colors.green[800],
+                            ),
+                          ),
+                        ],
                       ),
                       SizedBox(height: 8),
                       SelectableText(
@@ -325,6 +377,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                         style: TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 16,
+                          color: Colors.black87,
                         ),
                       ),
                     ],
@@ -336,43 +389,110 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
               
               // Action buttons
               if (_isScanning)
-                ElevatedButton(
+                ElevatedButton.icon(
                   onPressed: _cancelScanning,
+                  icon: Icon(Icons.cancel),
+                  label: Text('Cancel Scanning'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
                     padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                   ),
-                  child: Text('Cancel Scanning'),
                 )
               else if (_success && _cardSerialNumber != null)
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                Column(
                   children: [
-                    OutlinedButton(
-                      onPressed: _startNFCScanning,
-                      style: OutlinedButton.styleFrom(
-                        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _proceedToRegistration,
+                        icon: Icon(Icons.arrow_forward),
+                        label: Text('Proceed to Registration'),
+                        style: ElevatedButton.styleFrom(
+                          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
                       ),
-                      child: Text('Scan Again'),
                     ),
-                    SizedBox(width: 16),
-                    ElevatedButton(
-                      onPressed: _proceedToRegistration,
-                      style: ElevatedButton.styleFrom(
-                        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _startNFCScanning,
+                        icon: Icon(Icons.refresh),
+                        label: Text('Scan Different Card'),
+                        style: OutlinedButton.styleFrom(
+                          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
                       ),
-                      child: Text('Proceed to Registration'),
                     ),
                   ],
                 )
               else
-                ElevatedButton.icon(
-                  onPressed: _startNFCScanning,
-                  icon: Icon(Icons.contactless),
-                  label: Text('Scan Card'),
-                  style: ElevatedButton.styleFrom(
-                    padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                  ),
+                Column(
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _startNFCScanning,
+                        icon: Icon(Icons.contactless),
+                        label: Text('Scan NFC Card'),
+                        style: ElevatedButton.styleFrom(
+                          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(child: Divider()),
+                        Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 16),
+                          child: Text(
+                            'OR',
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        Expanded(child: Divider()),
+                      ],
+                    ),
+                    SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _proceedWithoutCard,
+                        icon: Icon(Icons.person_add),
+                        label: Text('Register Without NFC'),
+                        style: OutlinedButton.styleFrom(
+                          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      'A unique ID will be generated automatically',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                        fontStyle: FontStyle.italic,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
             ],
           ),

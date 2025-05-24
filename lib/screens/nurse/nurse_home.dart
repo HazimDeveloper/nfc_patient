@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nfc_patient_registration/screens/nurse/nurse_patient_list_screen.dart' show NursePatientListScreen;
 import 'package:provider/provider.dart';
 import 'package:nfc_patient_registration/services/auth_service.dart';
 import 'package:nfc_patient_registration/services/database_service.dart';
@@ -50,7 +51,7 @@ class _NurseHomeState extends State<NurseHome> {
     
     return Scaffold(
       appBar: AppBar(
-        title: Text('Nurse Dashboard'),
+        title: Text('Nurse Dashboard', style: TextStyle(color: Colors.white)),
         actions: [
           IconButton(
             icon: Icon(Icons.exit_to_app),
@@ -170,15 +171,15 @@ class _NurseHomeState extends State<NurseHome> {
                     },
                   ),
                   _buildActionButton(
-                    icon: Icons.format_list_bulleted,
+                    icon: Icons.people,
                     label: 'All Patients',
                     onPressed: () {
-                      // TODO: Navigate to all patients screen
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('All patients view coming soon'),
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => NursePatientListScreen(),
                         ),
-                      );
+                      ).then((_) => _loadNewPatients());
                     },
                   ),
                 ],
@@ -200,14 +201,30 @@ class _NurseHomeState extends State<NurseHome> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              Text(
-                '${_newPatients.length} need assignment',
-                style: TextStyle(
-                  color: _newPatients.isNotEmpty
-                      ? Colors.orange
-                      : Colors.green,
-                  fontWeight: FontWeight.bold,
-                ),
+              Row(
+                children: [
+                  Text(
+                    '${_newPatients.length} need assignment',
+                    style: TextStyle(
+                      color: _newPatients.isNotEmpty
+                          ? Colors.orange
+                          : Colors.green,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => NursePatientListScreen(),
+                        ),
+                      ).then((_) => _loadNewPatients());
+                    },
+                    child: Text('View All'),
+                  ),
+                ],
               ),
             ],
           ),
@@ -233,6 +250,19 @@ class _NurseHomeState extends State<NurseHome> {
                           color: Colors.grey[600],
                         ),
                         textAlign: TextAlign.center,
+                      ),
+                      SizedBox(height: 16),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => NursePatientListScreen(),
+                            ),
+                          ).then((_) => _loadNewPatients());
+                        },
+                        icon: Icon(Icons.people),
+                        label: Text('View All Patients'),
                       ),
                     ],
                   ),
@@ -308,6 +338,18 @@ class _NurseHomeState extends State<NurseHome> {
               TextButton(
                 onPressed: () => Navigator.pop(context),
                 child: Text('Close'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => NursePatientListScreen(),
+                    ),
+                  ).then((_) => _loadNewPatients());
+                },
+                child: Text('View All Patients'),
               ),
               if (patient['currentAppointment'] == null)
                 ElevatedButton(

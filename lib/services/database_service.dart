@@ -182,6 +182,52 @@ class DatabaseService {
       rethrow;
     }
   }
+
+  Future<List<Map<String, dynamic>>> getAllAssignedPatients() async {
+  try {
+    final snapshot = await patientsCollection
+        .where('currentAppointment', isNotEqualTo: null)
+        .orderBy('lastUpdated', descending: true)
+        .get();
+    
+    return snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+  } catch (e) {
+    print('Error getting assigned patients: ${e.toString()}');
+    rethrow;
+  }
+}
+
+// Get appointment by ID
+Future<Map<String, dynamic>?> getAppointmentById(String appointmentId) async {
+  try {
+    final doc = await appointmentsCollection.doc(appointmentId).get();
+    
+    if (doc.exists) {
+      return doc.data() as Map<String, dynamic>;
+    }
+    
+    return null;
+  } catch (e) {
+    print('Error getting appointment by ID: ${e.toString()}');
+    return null;
+  }
+}
+
+// Get doctor by ID
+Future<Map<String, dynamic>?> getDoctorById(String doctorId) async {
+  try {
+    final doc = await doctorsCollection.doc(doctorId).get();
+    
+    if (doc.exists) {
+      return doc.data() as Map<String, dynamic>;
+    }
+    
+    return null;
+  } catch (e) {
+    print('Error getting doctor by ID: ${e.toString()}');
+    return null;
+  }
+}
   
   // Get all doctors
   Future<List<Map<String, dynamic>>> getAllDoctors() async {

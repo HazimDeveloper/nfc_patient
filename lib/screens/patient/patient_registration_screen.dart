@@ -45,13 +45,24 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
   void initState() {
     super.initState();
     // Store the card serial number and validate it
-    _effectiveCardSerialNumber = widget.cardSerialNumber;
-    print('Received card serial number: $_effectiveCardSerialNumber');
+    _effectiveCardSerialNumber = widget.cardSerialNumber.trim();
+    print('Received card serial number: "$_effectiveCardSerialNumber"');
     
-    // Generate a temporary serial number if empty (only for debugging)
+    // If card serial number is empty, generate a temporary one for testing
     if (_effectiveCardSerialNumber.isEmpty) {
-      _effectiveCardSerialNumber = 'TEST_CARD_${DateTime.now().millisecondsSinceEpoch}';
-      print('WARNING: Using generated card serial number: $_effectiveCardSerialNumber for testing');
+      _effectiveCardSerialNumber = 'CARD_${DateTime.now().millisecondsSinceEpoch}';
+      print('Generated card serial number: $_effectiveCardSerialNumber');
+      
+      // Show a warning to the user
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Warning: No card serial detected. Using generated ID: $_effectiveCardSerialNumber'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 5),
+          ),
+        );
+      });
     }
   }
   
@@ -120,7 +131,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
       return;
     }
     
-    // Validate card serial number
+    // Final validation of card serial number
     if (_effectiveCardSerialNumber.isEmpty) {
       setState(() {
         _errorMessage = 'Card serial number cannot be empty. Please scan a valid NFC card first.';
@@ -136,7 +147,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     try {
       final databaseService = DatabaseService();
       
-      print('Registering patient with card serial: $_effectiveCardSerialNumber');
+      print('Registering patient with card serial: "$_effectiveCardSerialNumber"');
       
       final patientData = await databaseService.registerPatient(
         name: _nameController.text.trim(),
@@ -146,15 +157,25 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
         gender: _selectedGender,
         address: _addressController.text.trim(),
         bloodType: _bloodType,
-        emergencyContact: _emergencyContactController.text.trim(),
+        emergencyContact: _emergencyContactController.text.trim().isNotEmpty 
+            ? _emergencyContactController.text.trim() 
+            : null,
         allergies: _allergies,
         medications: _medications,
         conditions: _conditions,
         cardSerialNumber: _effectiveCardSerialNumber,
       );
       
-      // Navigate to NFC writer screen with the patient data
       if (mounted) {
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Patient registered successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        
+        // Navigate to NFC writer screen with the patient data
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -162,34 +183,23 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
               action: NFCAction.write,
               dataToWrite: patientData,
               onWriteComplete: (success) {
-                if (success) {
-                  // Reset form on success
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Patient registered successfully and NFC card written'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                    
-                    // Clear form
-                    _formKey.currentState?.reset();
-                    _nameController.clear();
-                    _emailController.clear();
-                    _phoneController.clear();
-                    _dobController.clear();
-                    _addressController.clear();
-                    _emergencyContactController.clear();
-                    
-                    setState(() {
-                      _selectedDate = null;
-                      _selectedGender = 'Male';
-                      _bloodType = null;
-                      _allergies.clear();
-                      _medications.clear();
-                      _conditions.clear();
-                    });
-                  }
+                if (success && mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('NFC card written successfully'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                  
+                  // Clear form and go back to nurse home
+                  Navigator.popUntil(context, (route) => route.isFirst);
+                } else if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Failed to write to NFC card'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
                 }
               },
             ),
@@ -214,7 +224,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Register New Patient',style: TextStyle(color: Colors.white)),
+        title: Text('Register New Patient', style: TextStyle(color: Colors.white)),
         centerTitle: true,
       ),
       body: GestureDetector(
@@ -240,7 +250,9 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                         children: [
                           Icon(
                             Icons.contactless,
-                            color: Theme.of(context).primaryColor,
+                            color: _effectiveCardSerialNumber.startsWith('CARD_') 
+                                ? Colors.orange 
+                                : Theme.of(context).primaryColor,
                           ),
                           SizedBox(width: 8),
                           Text(
@@ -248,7 +260,9 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
-                              color: Theme.of(context).primaryColor,
+                              color: _effectiveCardSerialNumber.startsWith('CARD_') 
+                                  ? Colors.orange 
+                                  : Theme.of(context).primaryColor,
                             ),
                           ),
                         ],
@@ -258,17 +272,36 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                         width: double.infinity,
                         padding: EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.grey.withOpacity(0.1),
+                          color: _effectiveCardSerialNumber.startsWith('CARD_') 
+                              ? Colors.orange.withOpacity(0.1)
+                              : Colors.grey.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(8),
+                          border: _effectiveCardSerialNumber.startsWith('CARD_') 
+                              ? Border.all(color: Colors.orange, width: 1)
+                              : null,
                         ),
                         child: SelectableText(
                           _effectiveCardSerialNumber,
                           style: TextStyle(
                             fontFamily: 'monospace',
                             fontSize: 14,
+                            color: _effectiveCardSerialNumber.startsWith('CARD_') 
+                                ? Colors.orange[800]
+                                : Colors.black87,
                           ),
                         ),
                       ),
+                      if (_effectiveCardSerialNumber.startsWith('CARD_')) ...[
+                        SizedBox(height: 8),
+                        Text(
+                          'Note: This is a generated ID since no NFC card was detected.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.orange[700],
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -484,13 +517,21 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
               if (_errorMessage.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 16),
-                  child: Text(
-                    _errorMessage,
-                    style: TextStyle(
-                      color: Colors.red,
-                      fontSize: 14,
+                  child: Container(
+                    padding: EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red),
                     ),
-                    textAlign: TextAlign.center,
+                    child: Text(
+                      _errorMessage,
+                      style: TextStyle(
+                        color: Colors.red[800],
+                        fontSize: 14,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
                   ),
                 ),
               
