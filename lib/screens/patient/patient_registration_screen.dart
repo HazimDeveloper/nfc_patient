@@ -37,6 +37,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
   
   bool _isLoading = false;
   String _errorMessage = '';
+  bool _isCardValidated = false;
   
   DateTime? _selectedDate;
   String _effectiveCardSerialNumber = '';
@@ -63,7 +64,126 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
           ),
         );
       });
+    } else {
+      // Validate the card before allowing registration
+      _validateCard();
     }
+  }
+  
+  // Validate that the card is not already registered
+  Future<void> _validateCard() async {
+    try {
+      final databaseService = DatabaseService();
+      final cardCheck = await databaseService.checkCardRegistration(_effectiveCardSerialNumber);
+      
+      if (cardCheck != null && cardCheck['isRegistered'] == true) {
+        final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
+        
+        // Card is already registered - show error and prevent registration
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showCardAlreadyRegisteredDialog(existingPatient);
+        });
+        
+        setState(() {
+          _isCardValidated = false;
+          _errorMessage = 'This NFC card is already registered to another patient.';
+        });
+      } else {
+        setState(() {
+          _isCardValidated = true;
+          _errorMessage = '';
+        });
+      }
+    } catch (e) {
+      print('Error validating card: $e');
+      setState(() {
+        _isCardValidated = false;
+        _errorMessage = 'Unable to validate NFC card. Please try again.';
+      });
+    }
+  }
+  
+  // Show dialog when card is already registered
+  void _showCardAlreadyRegisteredDialog(Map<String, dynamic> existingPatient) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.error, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Card Already Registered'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This NFC card is already registered to:',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Colors.red[700],
+              ),
+            ),
+            SizedBox(height: 12),
+            Container(
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Name: ${existingPatient['name'] ?? 'Unknown'}'),
+                  Text('Patient ID: ${existingPatient['patientId'] ?? 'Unknown'}'),
+                  Text('Date of Birth: ${existingPatient['dateOfBirth'] ?? 'Unknown'}'),
+                  Text('Phone: ${existingPatient['phone'] ?? 'Unknown'}'),
+                ],
+              ),
+            ),
+            SizedBox(height: 12),
+            Container(
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning, color: Colors.orange, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Each NFC card can only be registered to one patient. Please use a different card or register without NFC.',
+                      style: TextStyle(
+                        color: Colors.orange[800],
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context); // Close dialog
+              Navigator.pop(context); // Go back to NFC scan screen
+            },
+            child: Text('Use Different Card'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).primaryColor,
+            ),
+          ),
+        ],
+      ),
+    );
   }
   
   @override
@@ -131,10 +251,17 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
       return;
     }
     
-    // Final validation of card serial number
+    // Final validation of card serial number and registration status
     if (_effectiveCardSerialNumber.isEmpty) {
       setState(() {
         _errorMessage = 'Card serial number cannot be empty. Please scan a valid NFC card first.';
+      });
+      return;
+    }
+    
+    if (!_isCardValidated && !_effectiveCardSerialNumber.startsWith('CARD_') && !_effectiveCardSerialNumber.startsWith('MANUAL_')) {
+      setState(() {
+        _errorMessage = 'Please validate the NFC card before proceeding.';
       });
       return;
     }
@@ -175,36 +302,44 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
           ),
         );
         
-        // Navigate to NFC writer screen with the patient data
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => NFCScanScreen(
-              action: NFCAction.write,
-              dataToWrite: patientData,
-              onWriteComplete: (success) {
-                if (success && mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('NFC card written successfully'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                  
-                  // Clear form and go back to nurse home
-                  Navigator.popUntil(context, (route) => route.isFirst);
-                } else if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Failed to write to NFC card'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-              },
+        // Navigate to NFC writer screen with the patient data if using real NFC card
+        if (!_effectiveCardSerialNumber.startsWith('CARD_') && !_effectiveCardSerialNumber.startsWith('MANUAL_')) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => NFCScanScreen(
+                action: NFCAction.write,
+                dataToWrite: patientData,
+                onWriteComplete: (success) {
+                  if (success && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('NFC card written successfully'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                    
+                    // Go back to nurse home
+                    Navigator.popUntil(context, (route) => route.isFirst);
+                  } else if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Failed to write to NFC card, but patient is registered'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    
+                    // Go back to nurse home
+                    Navigator.popUntil(context, (route) => route.isFirst);
+                  }
+                },
+              ),
             ),
-          ),
-        );
+          );
+        } else {
+          // For generated or manual IDs, just go back
+          Navigator.popUntil(context, (route) => route.isFirst);
+        }
       }
     } catch (e) {
       setState(() {
@@ -250,9 +385,11 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                         children: [
                           Icon(
                             Icons.contactless,
-                            color: _effectiveCardSerialNumber.startsWith('CARD_') 
-                                ? Colors.orange 
-                                : Theme.of(context).primaryColor,
+                            color: _isCardValidated 
+                                ? Colors.green
+                                : _effectiveCardSerialNumber.startsWith('CARD_') || _effectiveCardSerialNumber.startsWith('MANUAL_')
+                                    ? Colors.orange 
+                                    : Colors.red,
                           ),
                           SizedBox(width: 8),
                           Text(
@@ -260,11 +397,18 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
-                              color: _effectiveCardSerialNumber.startsWith('CARD_') 
-                                  ? Colors.orange 
-                                  : Theme.of(context).primaryColor,
+                              color: _isCardValidated 
+                                  ? Colors.green[800]
+                                  : _effectiveCardSerialNumber.startsWith('CARD_') || _effectiveCardSerialNumber.startsWith('MANUAL_')
+                                      ? Colors.orange[800]
+                                      : Colors.red[800],
                             ),
                           ),
+                          Spacer(),
+                          if (_isCardValidated)
+                            Icon(Icons.check_circle, color: Colors.green, size: 20)
+                          else if (!_effectiveCardSerialNumber.startsWith('CARD_') && !_effectiveCardSerialNumber.startsWith('MANUAL_'))
+                            Icon(Icons.error, color: Colors.red, size: 20),
                         ],
                       ),
                       SizedBox(height: 8),
@@ -272,36 +416,53 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                         width: double.infinity,
                         padding: EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: _effectiveCardSerialNumber.startsWith('CARD_') 
-                              ? Colors.orange.withOpacity(0.1)
-                              : Colors.grey.withOpacity(0.1),
+                          color: _isCardValidated 
+                              ? Colors.green.withOpacity(0.1)
+                              : _effectiveCardSerialNumber.startsWith('CARD_') || _effectiveCardSerialNumber.startsWith('MANUAL_')
+                                  ? Colors.orange.withOpacity(0.1)
+                                  : Colors.red.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(8),
-                          border: _effectiveCardSerialNumber.startsWith('CARD_') 
-                              ? Border.all(color: Colors.orange, width: 1)
-                              : null,
+                          border: Border.all(
+                            color: _isCardValidated 
+                                ? Colors.green
+                                : _effectiveCardSerialNumber.startsWith('CARD_') || _effectiveCardSerialNumber.startsWith('MANUAL_')
+                                    ? Colors.orange
+                                    : Colors.red,
+                            width: 1
+                          ),
                         ),
                         child: SelectableText(
                           _effectiveCardSerialNumber,
                           style: TextStyle(
                             fontFamily: 'monospace',
                             fontSize: 14,
-                            color: _effectiveCardSerialNumber.startsWith('CARD_') 
-                                ? Colors.orange[800]
-                                : Colors.black87,
+                            color: _isCardValidated 
+                                ? Colors.green[800]
+                                : _effectiveCardSerialNumber.startsWith('CARD_') || _effectiveCardSerialNumber.startsWith('MANUAL_')
+                                    ? Colors.orange[800]
+                                    : Colors.red[800],
                           ),
                         ),
                       ),
-                      if (_effectiveCardSerialNumber.startsWith('CARD_')) ...[
-                        SizedBox(height: 8),
-                        Text(
-                          'Note: This is a generated ID since no NFC card was detected.',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.orange[700],
-                            fontStyle: FontStyle.italic,
-                          ),
+                      SizedBox(height: 8),
+                      Text(
+                        _isCardValidated 
+                            ? '✓ Card is available for registration'
+                            : _effectiveCardSerialNumber.startsWith('CARD_')
+                                ? 'Note: This is a generated ID since no NFC card was detected.'
+                                : _effectiveCardSerialNumber.startsWith('MANUAL_')
+                                    ? 'Note: Manual registration without NFC card.'
+                                    : '⚠ This card is already registered to another patient.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _isCardValidated 
+                              ? Colors.green[700]
+                              : _effectiveCardSerialNumber.startsWith('CARD_') || _effectiveCardSerialNumber.startsWith('MANUAL_')
+                                  ? Colors.orange[700]
+                                  : Colors.red[700],
+                          fontStyle: FontStyle.italic,
                         ),
-                      ],
+                      ),
                     ],
                   ),
                 ),
@@ -524,20 +685,29 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: Colors.red),
                     ),
-                    child: Text(
-                      _errorMessage,
-                      style: TextStyle(
-                        color: Colors.red[800],
-                        fontSize: 14,
-                      ),
-                      textAlign: TextAlign.center,
+                    child: Row(
+                      children: [
+                        Icon(Icons.error, color: Colors.red, size: 20),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _errorMessage,
+                            style: TextStyle(
+                              color: Colors.red[800],
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
               
               // Submit button
               ElevatedButton.icon(
-                onPressed: _isLoading ? null : _submitForm,
+                onPressed: (_isLoading || (!_isCardValidated && !_effectiveCardSerialNumber.startsWith('CARD_') && !_effectiveCardSerialNumber.startsWith('MANUAL_')))
+                    ? null 
+                    : _submitForm,
                 icon: _isLoading
                     ? SizedBox(
                         width: 20,
@@ -556,6 +726,21 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                   ),
                 ),
               ),
+              
+              // Help text for disabled button
+              if (!_isCardValidated && !_effectiveCardSerialNumber.startsWith('CARD_') && !_effectiveCardSerialNumber.startsWith('MANUAL_'))
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Registration is disabled because the NFC card is already registered to another patient. Please use a different card.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.red[700],
+                      fontStyle: FontStyle.italic,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
             ],
           ),
         ),

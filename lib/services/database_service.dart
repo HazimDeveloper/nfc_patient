@@ -23,7 +23,64 @@ class DatabaseService {
   final CollectionReference cardMappingCollection = 
       FirebaseFirestore.instance.collection('cardMapping');
   
-  // Register new patient with NFC card
+  // Check if NFC card is already registered to another patient
+  Future<Map<String, dynamic>?> checkCardRegistration(String cardSerialNumber) async {
+    try {
+      if (cardSerialNumber.isEmpty) {
+        return null;
+      }
+      
+      print('Checking if card is already registered: $cardSerialNumber');
+      
+      // Check in card mapping collection first
+      final cardDoc = await cardMappingCollection.doc(cardSerialNumber).get();
+      
+      if (cardDoc.exists) {
+        final cardData = cardDoc.data() as Map<String, dynamic>;
+        final patientId = cardData['patientId'];
+        
+        if (patientId != null) {
+          // Get patient details
+          final patientDoc = await patientsCollection.doc(patientId).get();
+          
+          if (patientDoc.exists) {
+            final patientData = patientDoc.data() as Map<String, dynamic>;
+            return {
+              'isRegistered': true,
+              'patientData': patientData,
+              'cardData': cardData,
+            };
+          }
+        }
+      }
+      
+      // Also check directly in patients collection as a backup
+      final patientSnapshot = await patientsCollection
+          .where('cardSerialNumber', isEqualTo: cardSerialNumber)
+          .limit(1)
+          .get();
+      
+      if (patientSnapshot.docs.isNotEmpty) {
+        final patientData = patientSnapshot.docs.first.data() as Map<String, dynamic>;
+        return {
+          'isRegistered': true,
+          'patientData': patientData,
+          'cardData': {'cardSerialNumber': cardSerialNumber},
+        };
+      }
+      
+      return {
+        'isRegistered': false,
+        'patientData': null,
+        'cardData': null,
+      };
+    } catch (e) {
+      print('Error checking card registration: ${e.toString()}');
+      rethrow;
+    }
+  }
+  
+  // Register new patient with NFC card validation
   Future<Map<String, dynamic>> registerPatient({
     required String name,
     required String email,
@@ -44,10 +101,22 @@ class DatabaseService {
         throw Exception('Card serial number cannot be empty');
       }
       
+      print('Registering patient with card serial: $cardSerialNumber');
+      
+      // Check if card is already registered
+      final cardCheck = await checkCardRegistration(cardSerialNumber);
+      
+      if (cardCheck != null && cardCheck['isRegistered'] == true) {
+        final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
+        throw Exception(
+          'This NFC card is already registered to patient: ${existingPatient['name']} (ID: ${existingPatient['patientId']}). Each card can only be registered to one patient.'
+        );
+      }
+      
       // Generate a unique patient ID
       final patientId = uid ?? _firestore.collection('patients').doc().id;
       
-      print('Registering patient with ID: $patientId and card: $cardSerialNumber');
+      print('Creating new patient with ID: $patientId');
       
       // Create patient data
       final patientData = {
@@ -68,8 +137,15 @@ class DatabaseService {
         'lastUpdated': FieldValue.serverTimestamp(),
       };
       
-      // Save to Firestore in a transaction to ensure both operations succeed or fail together
+      // Save to Firestore in a transaction to ensure atomicity
       await _firestore.runTransaction((transaction) async {
+        // Double-check that card is not registered during the transaction
+        final cardDoc = await transaction.get(cardMappingCollection.doc(cardSerialNumber));
+        
+        if (cardDoc.exists) {
+          throw Exception('This NFC card was just registered by another user. Please try with a different card.');
+        }
+        
         // Save patient data
         transaction.set(patientsCollection.doc(patientId), patientData);
         
@@ -77,6 +153,8 @@ class DatabaseService {
         transaction.set(cardMappingCollection.doc(cardSerialNumber), {
           'patientId': patientId,
           'cardSerialNumber': cardSerialNumber,
+          'patientName': name,
+          'registeredAt': FieldValue.serverTimestamp(),
           'createdAt': FieldValue.serverTimestamp(),
         });
       });
@@ -148,6 +226,55 @@ class DatabaseService {
     }
   }
   
+  // Remove card registration (for admin purposes)
+  Future<void> removeCardRegistration(String cardSerialNumber) async {
+    try {
+      await _firestore.runTransaction((transaction) async {
+        // Remove from card mapping
+        transaction.delete(cardMappingCollection.doc(cardSerialNumber));
+        
+        // Find and update patient record to remove card serial
+        final patientSnapshot = await patientsCollection
+            .where('cardSerialNumber', isEqualTo: cardSerialNumber)
+            .limit(1)
+            .get();
+        
+        if (patientSnapshot.docs.isNotEmpty) {
+          final patientDoc = patientSnapshot.docs.first;
+          transaction.update(patientDoc.reference, {
+            'cardSerialNumber': null,
+            'lastUpdated': FieldValue.serverTimestamp(),
+          });
+        }
+      });
+      
+      print('Card registration removed successfully: $cardSerialNumber');
+    } catch (e) {
+      print('Error removing card registration: ${e.toString()}');
+      rethrow;
+    }
+  }
+  
+  // Get all registered cards (for admin purposes)
+  Future<List<Map<String, dynamic>>> getAllRegisteredCards() async {
+    try {
+      final snapshot = await cardMappingCollection
+          .orderBy('registeredAt', descending: true)
+          .get();
+      
+      return snapshot.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        return {
+          ...data,
+          'cardId': doc.id,
+        };
+      }).toList();
+    } catch (e) {
+      print('Error getting all registered cards: ${e.toString()}');
+      rethrow;
+    }
+  }
+  
   // Assign room and doctor to patient
   Future<void> assignRoomAndDoctor({
     required String patientId,
@@ -182,52 +309,6 @@ class DatabaseService {
       rethrow;
     }
   }
-
-  Future<List<Map<String, dynamic>>> getAllAssignedPatients() async {
-  try {
-    final snapshot = await patientsCollection
-        .where('currentAppointment', isNotEqualTo: null)
-        .orderBy('lastUpdated', descending: true)
-        .get();
-    
-    return snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
-  } catch (e) {
-    print('Error getting assigned patients: ${e.toString()}');
-    rethrow;
-  }
-}
-
-// Get appointment by ID
-Future<Map<String, dynamic>?> getAppointmentById(String appointmentId) async {
-  try {
-    final doc = await appointmentsCollection.doc(appointmentId).get();
-    
-    if (doc.exists) {
-      return doc.data() as Map<String, dynamic>;
-    }
-    
-    return null;
-  } catch (e) {
-    print('Error getting appointment by ID: ${e.toString()}');
-    return null;
-  }
-}
-
-// Get doctor by ID
-Future<Map<String, dynamic>?> getDoctorById(String doctorId) async {
-  try {
-    final doc = await doctorsCollection.doc(doctorId).get();
-    
-    if (doc.exists) {
-      return doc.data() as Map<String, dynamic>;
-    }
-    
-    return null;
-  } catch (e) {
-    print('Error getting doctor by ID: ${e.toString()}');
-    return null;
-  }
-}
   
   // Get all doctors
   Future<List<Map<String, dynamic>>> getAllDoctors() async {
@@ -383,6 +464,53 @@ Future<Map<String, dynamic>?> getDoctorById(String doctorId) async {
     } catch (e) {
       print('Error getting new patients: ${e.toString()}');
       rethrow;
+    }
+  }
+  
+  // Get all assigned patients
+  Future<List<Map<String, dynamic>>> getAllAssignedPatients() async {
+    try {
+      final snapshot = await patientsCollection
+          .where('currentAppointment', isNotEqualTo: null)
+          .orderBy('lastUpdated', descending: true)
+          .get();
+      
+      return snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+    } catch (e) {
+      print('Error getting assigned patients: ${e.toString()}');
+      rethrow;
+    }
+  }
+
+  // Get appointment by ID
+  Future<Map<String, dynamic>?> getAppointmentById(String appointmentId) async {
+    try {
+      final doc = await appointmentsCollection.doc(appointmentId).get();
+      
+      if (doc.exists) {
+        return doc.data() as Map<String, dynamic>;
+      }
+      
+      return null;
+    } catch (e) {
+      print('Error getting appointment by ID: ${e.toString()}');
+      return null;
+    }
+  }
+
+  // Get doctor by ID
+  Future<Map<String, dynamic>?> getDoctorById(String doctorId) async {
+    try {
+      final doc = await doctorsCollection.doc(doctorId).get();
+      
+      if (doc.exists) {
+        return doc.data() as Map<String, dynamic>;
+      }
+      
+      return null;
+    } catch (e) {
+      print('Error getting doctor by ID: ${e.toString()}');
+      return null;
     }
   }
 }
