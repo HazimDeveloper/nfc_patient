@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:nfc_patient_registration/services/database_service.dart';
 
 class AuthService with ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final DatabaseService _databaseService = DatabaseService();
   
   // Get auth state changes
   Stream<User?> get user => _auth.authStateChanges();
@@ -52,13 +54,15 @@ class AuthService with ChangeNotifier {
           'createdAt': FieldValue.serverTimestamp(),
         });
         
-        // Create role-specific document
-        await _firestore.collection(role + 's').doc(user.uid).set({
-          'userId': user.uid,
-          'email': email,
-          'name': name,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+        // For non-patient roles, create role-specific document
+        if (role != 'patient') {
+          await _firestore.collection(role + 's').doc(user.uid).set({
+            'userId': user.uid,
+            'email': email,
+            'name': name,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
         
         notifyListeners();
       }
@@ -81,6 +85,13 @@ class AuthService with ChangeNotifier {
     if (currentUser == null) return 'patient'; // Default role
     
     try {
+      // First check if user is a patient by email
+      final patientData = await _databaseService.getPatientByEmail(currentUser!.email!);
+      if (patientData != null) {
+        return 'patient';
+      }
+      
+      // Check in users collection for other roles
       final doc = await _firestore.collection('users').doc(currentUser!.uid).get();
       
       if (doc.exists) {
@@ -91,6 +102,27 @@ class AuthService with ChangeNotifier {
     } catch (e) {
       print('Error getting user role: ${e.toString()}');
       return 'patient'; // Default role on error
+    }
+  }
+  
+  // Get current user ID - for patients, use their IC number
+  Future<String?> getCurrentUserId() async {
+    if (currentUser == null) return null;
+    
+    try {
+      final role = await getUserRole();
+      
+      if (role == 'patient') {
+        // For patients, get their IC number (patientId) from the database
+        final patientData = await _databaseService.getPatientByEmail(currentUser!.email!);
+        return patientData?['patientId']; // This is their IC number
+      } else {
+        // For other roles, use Firebase Auth UID
+        return currentUser!.uid;
+      }
+    } catch (e) {
+      print('Error getting current user ID: ${e.toString()}');
+      return currentUser!.uid; // Fallback to Auth UID
     }
   }
   
@@ -105,22 +137,33 @@ class AuthService with ChangeNotifier {
         await currentUser!.updatePhotoURL(photoUrl);
       }
       
-      // Update in Firestore
-      await _firestore.collection('users').doc(currentUser!.uid).update({
-        'name': name,
-        if (photoUrl != null) 'photoUrl': photoUrl,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      
-      // Get user role
+      // Get user role to determine which collection to update
       final role = await getUserRole();
       
-      // Update in role-specific collection
-      await _firestore.collection(role + 's').doc(currentUser!.uid).update({
-        'name': name,
-        if (photoUrl != null) 'photoUrl': photoUrl,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      if (role == 'patient') {
+        // For patients, update in patients collection using IC
+        final patientData = await _databaseService.getPatientByEmail(currentUser!.email!);
+        if (patientData != null) {
+          await _firestore.collection('patients').doc(patientData['patientId']).update({
+            'name': name,
+            'lastUpdated': FieldValue.serverTimestamp(),
+          });
+        }
+      } else {
+        // Update in users collection
+        await _firestore.collection('users').doc(currentUser!.uid).update({
+          'name': name,
+          if (photoUrl != null) 'photoUrl': photoUrl,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        
+        // Update in role-specific collection
+        await _firestore.collection(role + 's').doc(currentUser!.uid).update({
+          'name': name,
+          if (photoUrl != null) 'photoUrl': photoUrl,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
       
       notifyListeners();
     } catch (e) {
@@ -132,5 +175,14 @@ class AuthService with ChangeNotifier {
   // Reset password
   Future<void> resetPassword(String email) async {
     await _auth.sendPasswordResetEmail(email: email);
+  }
+  
+  // Initialize default doctors (call this once during app setup)
+  Future<void> initializeDefaultData() async {
+    try {
+      await _databaseService.initializeDefaultDoctors();
+    } catch (e) {
+      print('Error initializing default data: ${e.toString()}');
+    }
   }
 }

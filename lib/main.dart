@@ -58,9 +58,53 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class AuthWrapper extends StatelessWidget {
+class AuthWrapper extends StatefulWidget {
+  @override
+  _AuthWrapperState createState() => _AuthWrapperState();
+}
+
+class _AuthWrapperState extends State<AuthWrapper> {
+  bool _initialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    try {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      await authService.initializeDefaultData();
+      
+      setState(() {
+        _initialized = true;
+      });
+    } catch (e) {
+      print('Error initializing app: $e');
+      setState(() {
+        _initialized = true;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (!_initialized) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Initializing Hospital System...'),
+            ],
+          ),
+        ),
+      );
+    }
+
     final authService = Provider.of<AuthService>(context);
     
     return StreamBuilder(
@@ -95,7 +139,14 @@ class AuthWrapper extends StatelessWidget {
               // While determining role, show loading
               return Scaffold(
                 body: Center(
-                  child: CircularProgressIndicator(),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 16),
+                      Text('Checking your credentials...'),
+                    ],
+                  ),
                 ),
               );
             },
@@ -105,7 +156,14 @@ class AuthWrapper extends StatelessWidget {
         // Connection to auth state not yet established
         return Scaffold(
           body: Center(
-            child: CircularProgressIndicator(),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Connecting to server...'),
+              ],
+            ),
           ),
         );
       },

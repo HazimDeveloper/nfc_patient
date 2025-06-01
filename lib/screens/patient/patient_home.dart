@@ -15,6 +15,7 @@ class _PatientHomeState extends State<PatientHome> {
   Patient? _patient;
   List<Prescription> _prescriptions = [];
   Map<String, dynamic>? _appointment;
+  Map<String, dynamic>? _doctorInfo;
   bool _isLoading = true;
   String? _error;
 
@@ -33,13 +34,15 @@ class _PatientHomeState extends State<PatientHome> {
 
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
-      final patientId = authService.currentUser?.uid;
+      final patientId = await authService.getCurrentUserId();
 
       if (patientId == null) {
         throw Exception('Unable to identify patient');
       }
 
-      // Get patient data
+      print('Loading data for patient ID: $patientId');
+
+      // Get patient data using IC number
       final patientData = await _databaseService.getPatientById(patientId);
       
       if (patientData != null) {
@@ -58,10 +61,21 @@ class _PatientHomeState extends State<PatientHome> {
         // Sort prescriptions by date (newest first)
         _prescriptions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
         
-        // Get current appointment if available
+        // Get current appointment and doctor info if available
         if (_patient!.currentAppointment != null) {
-          // TODO: Implement appointment fetching
+          final appointmentData = await _databaseService.getAppointmentById(_patient!.currentAppointment!);
+          if (appointmentData != null) {
+            _appointment = appointmentData;
+            
+            // Get doctor information
+            final doctorData = await _databaseService.getDoctorById(appointmentData['doctorId']);
+            if (doctorData != null) {
+              _doctorInfo = doctorData;
+            }
+          }
         }
+      } else {
+        throw Exception('Patient data not found. Please contact the hospital.');
       }
 
       setState(() {
@@ -81,7 +95,7 @@ class _PatientHomeState extends State<PatientHome> {
     
     return Scaffold(
       appBar: AppBar(
-        title: Text('Patient Dashboard',style: TextStyle(color: Colors.white)),
+        title: Text('Patient Dashboard', style: TextStyle(color: Colors.white)),
         actions: [
           IconButton(
             icon: Icon(Icons.exit_to_app),
@@ -100,7 +114,14 @@ class _PatientHomeState extends State<PatientHome> {
   Widget _buildBody() {
     if (_isLoading) {
       return Center(
-        child: CircularProgressIndicator(),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Loading your information...'),
+          ],
+        ),
       );
     }
 
@@ -136,7 +157,34 @@ class _PatientHomeState extends State<PatientHome> {
 
     if (_patient == null) {
       return Center(
-        child: Text('No patient data found'),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.person_search,
+              size: 60,
+              color: Colors.grey,
+            ),
+            SizedBox(height: 16),
+            Text(
+              'No patient data found',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[600],
+              ),
+            ),
+            SizedBox(height: 16),
+            Text(
+              'Please contact the hospital registration desk',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[500],
+                fontStyle: FontStyle.italic,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
       );
     }
 
@@ -151,7 +199,10 @@ class _PatientHomeState extends State<PatientHome> {
         if (_appointment != null) ...[
           _buildAppointmentCard(),
           SizedBox(height: 24),
-        ],
+        ] else
+          _buildNoAppointmentCard(),
+        
+        SizedBox(height: 24),
         
         // Prescriptions section
         Text(
@@ -296,9 +347,10 @@ class _PatientHomeState extends State<PatientHome> {
                       ),
                       SizedBox(height: 4),
                       Text(
-                        'Patient ID: ${_patient!.patientId}',
+                        'IC Number: ${_patient!.patientId}',
                         style: TextStyle(
                           color: Colors.grey[600],
+                          fontFamily: 'monospace',
                         ),
                       ),
                       SizedBox(height: 4),
@@ -382,28 +434,198 @@ class _PatientHomeState extends State<PatientHome> {
   }
 
   Widget _buildAppointmentCard() {
-    // TODO: Implement appointment card
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Upcoming Appointment',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Theme.of(context).primaryColor,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          gradient: LinearGradient(
+            colors: [Colors.green.withOpacity(0.1), Colors.blue.withOpacity(0.1)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.assignment_ind,
+                    color: Colors.green,
+                    size: 24,
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    'Current Assignment',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green[800],
+                    ),
+                  ),
+                ],
               ),
-            ),
-            Divider(),
-            Text('Appointment details will be displayed here'),
-          ],
+              Divider(),
+              SizedBox(height: 8),
+              
+              if (_doctorInfo != null) ...[
+                Row(
+                  children: [
+                    Icon(Icons.medical_services, size: 18, color: Colors.grey[600]),
+                    SizedBox(width: 8),
+                    Text(
+                      'Doctor:',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _doctorInfo!['name'],
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(Icons.local_hospital, size: 18, color: Colors.grey[600]),
+                    SizedBox(width: 8),
+                    Text(
+                      'Specialty:',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _doctorInfo!['specialization'] ?? 'General',
+                        style: TextStyle(
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 8),
+              ],
+              
+              Row(
+                children: [
+                  Icon(Icons.meeting_room, size: 18, color: Colors.grey[600]),
+                  SizedBox(width: 8),
+                  Text(
+                    'Room:',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                    ),
+                    child: Text(
+                      _appointment!['roomNumber'] ?? 'Not assigned',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue[800],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              
+              if (_appointment?['notes'] != null && _appointment!['notes'].toString().isNotEmpty) ...[
+                SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.note, size: 18, color: Colors.grey[600]),
+                    SizedBox(width: 8),
+                    Text(
+                      'Notes:',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _appointment!['notes'],
+                        style: TextStyle(
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoAppointmentCard() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: Colors.orange.withOpacity(0.1),
+        ),
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Icon(
+                Icons.schedule,
+                size: 48,
+                color: Colors.orange,
+              ),
+              SizedBox(height: 12),
+              Text(
+                'Waiting for Assignment',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.orange[800],
+                ),
+              ),
+              SizedBox(height: 8),
+              Text(
+                'You are currently in the queue. A nurse will assign you to a doctor and room shortly.',
+                style: TextStyle(
+                  color: Colors.grey[700],
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
       ),
     );
