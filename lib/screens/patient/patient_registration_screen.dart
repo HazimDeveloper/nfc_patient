@@ -37,153 +37,65 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
   
   bool _isLoading = false;
   String _errorMessage = '';
-  bool _isCardValidated = false;
   
   DateTime? _selectedDate;
   String _effectiveCardSerialNumber = '';
+  final _icController = TextEditingController();
   
   @override
   void initState() {
     super.initState();
-    // Store the card serial number and validate it
-    _effectiveCardSerialNumber = widget.cardSerialNumber.trim();
-    print('Received card serial number: "$_effectiveCardSerialNumber"');
+    _initializeCardSerial();
+  }
+  
+  void _initializeCardSerial() {
+    // Generate a realistic Malaysian IC number
+    final now = DateTime.now();
     
-    // If card serial number is empty, generate a temporary one for testing
-    if (_effectiveCardSerialNumber.isEmpty) {
-      _effectiveCardSerialNumber = 'CARD_${DateTime.now().millisecondsSinceEpoch}';
-      print('Generated card serial number: $_effectiveCardSerialNumber');
+    // Check if we received a valid card serial number
+    String receivedSerial = widget.cardSerialNumber.trim();
+    
+    if (receivedSerial.isEmpty || 
+        receivedSerial.startsWith('TAG-') ||
+        receivedSerial.startsWith('CARD_') ||
+        receivedSerial.startsWith('MANUAL_') ||
+        receivedSerial.length < 5) {
       
-      // Show a warning to the user
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Generate Malaysian IC format: YYMMDD-PB-GGGG
+      String year = now.year.toString().substring(2);
+      String month = now.month.toString().padLeft(2, '0');
+      String day = now.day.toString().padLeft(2, '0');
+      String placeOfBirth = (now.hour % 59 + 1).toString().padLeft(2, '0');
+      String gender = now.second % 2 == 0 ? '1' : '2'; // 1=male, 2=female
+      String lastDigits = (now.millisecond % 899 + 100).toString();
+      
+      _effectiveCardSerialNumber = '$year$month$day-$placeOfBirth-$gender$lastDigits';
+    } else {
+      _effectiveCardSerialNumber = receivedSerial;
+    }
+    
+    // Set the IC in the controller
+    _icController.text = _effectiveCardSerialNumber;
+    
+    print('Initialized patient registration with IC: $_effectiveCardSerialNumber');
+    
+    // Show the generated IC to user
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Warning: No card serial detected. Using generated ID: $_effectiveCardSerialNumber'),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 5),
+            content: Text('Patient IC Number: $_effectiveCardSerialNumber'),
+            backgroundColor: Colors.blue,
+            duration: Duration(seconds: 3),
+            action: SnackBarAction(
+              label: 'OK',
+              textColor: Colors.white,
+              onPressed: () {},
+            ),
           ),
         );
-      });
-    } else {
-      // Validate the card before allowing registration
-      _validateCard();
-    }
-  }
-  
-  // Validate that the card is not already registered
-  Future<void> _validateCard() async {
-    try {
-      final databaseService = DatabaseService();
-      final cardCheck = await databaseService.checkCardRegistration(_effectiveCardSerialNumber);
-      
-      if (cardCheck != null && cardCheck['isRegistered'] == true) {
-        final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
-        
-        // Card is already registered - show error and prevent registration
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _showCardAlreadyRegisteredDialog(existingPatient);
-        });
-        
-        setState(() {
-          _isCardValidated = false;
-          _errorMessage = 'This NFC card is already registered to another patient.';
-        });
-      } else {
-        setState(() {
-          _isCardValidated = true;
-          _errorMessage = '';
-        });
       }
-    } catch (e) {
-      print('Error validating card: $e');
-      setState(() {
-        _isCardValidated = false;
-        _errorMessage = 'Unable to validate NFC card. Please try again.';
-      });
-    }
-  }
-  
-  // Show dialog when card is already registered
-  void _showCardAlreadyRegisteredDialog(Map<String, dynamic> existingPatient) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.error, color: Colors.red),
-            SizedBox(width: 8),
-            Text('Card Already Registered'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'This NFC card is already registered to:',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.red[700],
-              ),
-            ),
-            SizedBox(height: 12),
-            Container(
-              padding: EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Name: ${existingPatient['name'] ?? 'Unknown'}'),
-                  Text('Patient ID: ${existingPatient['patientId'] ?? 'Unknown'}'),
-                  Text('Date of Birth: ${existingPatient['dateOfBirth'] ?? 'Unknown'}'),
-                  Text('Phone: ${existingPatient['phone'] ?? 'Unknown'}'),
-                ],
-              ),
-            ),
-            SizedBox(height: 12),
-            Container(
-              padding: EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withOpacity(0.3)),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.warning, color: Colors.orange, size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Each NFC card can only be registered to one patient. Please use a different card or register without NFC.',
-                      style: TextStyle(
-                        color: Colors.orange[800],
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context); // Close dialog
-              Navigator.pop(context); // Go back to NFC scan screen
-            },
-            child: Text('Use Different Card'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).primaryColor,
-            ),
-          ),
-        ],
-      ),
-    );
+    });
   }
   
   @override
@@ -197,6 +109,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     _newAllergyController.dispose();
     _newMedicationController.dispose();
     _newConditionController.dispose();
+    _icController.dispose();
     super.dispose();
   }
   
@@ -245,23 +158,51 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     });
   }
   
+  // Generate a new IC number
+  void _generateNewIC() {
+    final now = DateTime.now();
+    String year = now.year.toString().substring(2);
+    String month = now.month.toString().padLeft(2, '0');
+    String day = now.day.toString().padLeft(2, '0');
+    String placeOfBirth = (now.hour % 59 + 1).toString().padLeft(2, '0');
+    String gender = now.second % 2 == 0 ? '1' : '2';
+    String lastDigits = (now.millisecond % 899 + 100).toString();
+    
+    String newIC = '$year$month$day-$placeOfBirth-$gender$lastDigits';
+    
+    setState(() {
+      _effectiveCardSerialNumber = newIC;
+      _icController.text = newIC;
+    });
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('New IC generated: $newIC'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+  
+  // Validate IC format (basic Malaysian IC format check)
+  bool _isValidICFormat(String ic) {
+    // Basic format: YYMMDD-PB-GGGG or YYMMDDPBGGGG
+    final icPattern = RegExp(r'^\d{6}-?\d{2}-?\d{4}$');
+    return icPattern.hasMatch(ic) && ic.length >= 10;
+  }
+  
   // Submit form and register patient
   Future<void> _submitForm() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
     
-    // Final validation of card serial number and registration status
+    // Get IC from the input field
+    _effectiveCardSerialNumber = _icController.text.trim();
+    
+    // Ensure we have a valid IC number
     if (_effectiveCardSerialNumber.isEmpty) {
       setState(() {
-        _errorMessage = 'Card serial number cannot be empty. Please scan a valid NFC card first.';
-      });
-      return;
-    }
-    
-    if (!_isCardValidated && !_effectiveCardSerialNumber.startsWith('CARD_') && !_effectiveCardSerialNumber.startsWith('MANUAL_')) {
-      setState(() {
-        _errorMessage = 'Please validate the NFC card before proceeding.';
+        _errorMessage = 'Please enter a valid IC number';
       });
       return;
     }
@@ -274,7 +215,9 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     try {
       final databaseService = DatabaseService();
       
-      print('Registering patient with card serial: "$_effectiveCardSerialNumber"');
+      print('Attempting to register patient with IC: "$_effectiveCardSerialNumber"');
+      print('Patient name: "${_nameController.text.trim()}"');
+      print('Patient email: "${_emailController.text.trim()}"');
       
       final patientData = await databaseService.registerPatient(
         name: _nameController.text.trim(),
@@ -297,53 +240,18 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Patient registered successfully!'),
+            content: Text('✅ Patient registered successfully!\nIC: $_effectiveCardSerialNumber'),
             backgroundColor: Colors.green,
+            duration: Duration(seconds: 4),
           ),
         );
         
-        // Navigate to NFC writer screen with the patient data if using real NFC card
-        if (!_effectiveCardSerialNumber.startsWith('CARD_') && !_effectiveCardSerialNumber.startsWith('MANUAL_')) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => NFCScanScreen(
-                action: NFCAction.write,
-                dataToWrite: patientData,
-                onWriteComplete: (success) {
-                  if (success && mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('NFC card written successfully'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                    
-                    // Go back to nurse home
-                    Navigator.popUntil(context, (route) => route.isFirst);
-                  } else if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Failed to write to NFC card, but patient is registered'),
-                        backgroundColor: Colors.orange,
-                      ),
-                    );
-                    
-                    // Go back to nurse home
-                    Navigator.popUntil(context, (route) => route.isFirst);
-                  }
-                },
-              ),
-            ),
-          );
-        } else {
-          // For generated or manual IDs, just go back
-          Navigator.popUntil(context, (route) => route.isFirst);
-        }
+        // Navigate back to nurse dashboard
+        Navigator.popUntil(context, (route) => route.isFirst);
       }
     } catch (e) {
       setState(() {
-        _errorMessage = e.toString();
+        _errorMessage = 'Registration failed: ${e.toString()}';
         print('Error registering patient: $_errorMessage');
       });
     } finally {
@@ -369,101 +277,82 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
           child: ListView(
             padding: EdgeInsets.all(16),
             children: [
-              // Card serial number display
+              // IC Number Management Card (Quick Actions)
               Card(
                 elevation: 2,
                 margin: EdgeInsets.only(bottom: 24),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.contactless,
-                            color: _isCardValidated 
-                                ? Colors.green
-                                : _effectiveCardSerialNumber.startsWith('CARD_') || _effectiveCardSerialNumber.startsWith('MANUAL_')
-                                    ? Colors.orange 
-                                    : Colors.red,
-                          ),
-                          SizedBox(width: 8),
-                          Text(
-                            'NFC Card Serial Number',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: _isCardValidated 
-                                  ? Colors.green[800]
-                                  : _effectiveCardSerialNumber.startsWith('CARD_') || _effectiveCardSerialNumber.startsWith('MANUAL_')
-                                      ? Colors.orange[800]
-                                      : Colors.red[800],
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    gradient: LinearGradient(
+                      colors: [Colors.blue.withOpacity(0.1), Colors.teal.withOpacity(0.1)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.info_outline,
+                              color: Theme.of(context).primaryColor,
+                              size: 24,
                             ),
-                          ),
-                          Spacer(),
-                          if (_isCardValidated)
-                            Icon(Icons.check_circle, color: Colors.green, size: 20)
-                          else if (!_effectiveCardSerialNumber.startsWith('CARD_') && !_effectiveCardSerialNumber.startsWith('MANUAL_'))
-                            Icon(Icons.error, color: Colors.red, size: 20),
-                        ],
-                      ),
-                      SizedBox(height: 8),
-                      Container(
-                        width: double.infinity,
-                        padding: EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: _isCardValidated 
-                              ? Colors.green.withOpacity(0.1)
-                              : _effectiveCardSerialNumber.startsWith('CARD_') || _effectiveCardSerialNumber.startsWith('MANUAL_')
-                                  ? Colors.orange.withOpacity(0.1)
-                                  : Colors.red.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: _isCardValidated 
-                                ? Colors.green
-                                : _effectiveCardSerialNumber.startsWith('CARD_') || _effectiveCardSerialNumber.startsWith('MANUAL_')
-                                    ? Colors.orange
-                                    : Colors.red,
-                            width: 1
-                          ),
+                            SizedBox(width: 8),
+                            Text(
+                              'Patient Registration Info',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).primaryColor,
+                              ),
+                            ),
+                          ],
                         ),
-                        child: SelectableText(
-                          _effectiveCardSerialNumber,
+                        SizedBox(height: 12),
+                        Text(
+                          'Current IC Number: ${_icController.text.isNotEmpty ? _icController.text : 'Not set'}',
                           style: TextStyle(
-                            fontFamily: 'monospace',
                             fontSize: 14,
-                            color: _isCardValidated 
-                                ? Colors.green[800]
-                                : _effectiveCardSerialNumber.startsWith('CARD_') || _effectiveCardSerialNumber.startsWith('MANUAL_')
-                                    ? Colors.orange[800]
-                                    : Colors.red[800],
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                            fontFamily: 'monospace',
                           ),
                         ),
-                      ),
-                      SizedBox(height: 8),
-                      Text(
-                        _isCardValidated 
-                            ? '✓ Card is available for registration'
-                            : _effectiveCardSerialNumber.startsWith('CARD_')
-                                ? 'Note: This is a generated ID since no NFC card was detected.'
-                                : _effectiveCardSerialNumber.startsWith('MANUAL_')
-                                    ? 'Note: Manual registration without NFC card.'
-                                    : '⚠ This card is already registered to another patient.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: _isCardValidated 
-                              ? Colors.green[700]
-                              : _effectiveCardSerialNumber.startsWith('CARD_') || _effectiveCardSerialNumber.startsWith('MANUAL_')
-                                  ? Colors.orange[700]
-                                  : Colors.red[700],
-                          fontStyle: FontStyle.italic,
+                        SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'You can edit the IC number in the form below or generate a new one.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[700],
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              onPressed: _generateNewIC,
+                              icon: Icon(Icons.refresh, size: 16),
+                              label: Text('New IC', style: TextStyle(fontSize: 12)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Theme.of(context).primaryColor,
+                                foregroundColor: Colors.white,
+                                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -471,11 +360,113 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
               // Basic Information Section
               _buildSectionHeader('Basic Information'),
               
+              // IC Number in Basic Information
+              TextFormField(
+                controller: _icController,
+                decoration: InputDecoration(
+                  labelText: 'IC Number *',
+                  hintText: 'e.g., 991231-01-1234',
+                  prefixIcon: Icon(Icons.credit_card),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.refresh, size: 20),
+                        onPressed: _generateNewIC,
+                        tooltip: 'Generate New IC',
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.help_outline, size: 20),
+                        onPressed: () {
+                          showDialog(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: Text('IC Number Format'),
+                              content: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Malaysian IC format:'),
+                                  SizedBox(height: 8),
+                                  Text('YYMMDD-PB-GGGG', style: TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.bold)),
+                                  SizedBox(height: 8),
+                                  Text('• YY: Year of birth'),
+                                  Text('• MM: Month of birth'),
+                                  Text('• DD: Day of birth'),
+                                  Text('• PB: Place of birth code'),
+                                  Text('• GGGG: Gender and serial number'),
+                                  SizedBox(height: 8),
+                                  Text('Example: 991231-01-1234'),
+                                ],
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: Text('OK'),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                        tooltip: 'IC Format Help',
+                      ),
+                    ],
+                  ),
+                ),
+                onChanged: (value) {
+                  setState(() {
+                    _effectiveCardSerialNumber = value.trim();
+                  });
+                },
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Please enter IC number';
+                  }
+                  if (!_isValidICFormat(value.trim())) {
+                    return 'Please enter a valid IC format (YYMMDD-PB-GGGG)';
+                  }
+                  return null;
+                },
+              ),
+              SizedBox(height: 8),
+              // IC Validation feedback
+              Row(
+                children: [
+                  Icon(
+                    _isValidICFormat(_icController.text) 
+                        ? Icons.check_circle 
+                        : Icons.info,
+                    size: 16,
+                    color: _isValidICFormat(_icController.text) 
+                        ? Colors.green 
+                        : Colors.orange,
+                  ),
+                  SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      _isValidICFormat(_icController.text)
+                          ? 'Valid IC format ✓'
+                          : 'Enter IC in format: YYMMDD-PB-GGGG',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _isValidICFormat(_icController.text) 
+                            ? Colors.green[700] 
+                            : Colors.orange[700],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: 16),
+              
               // Name
               TextFormField(
                 controller: _nameController,
                 decoration: InputDecoration(
-                  labelText: 'Full Name',
+                  labelText: 'Full Name *',
                   prefixIcon: Icon(Icons.person),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -495,7 +486,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
                 decoration: InputDecoration(
-                  labelText: 'Email',
+                  labelText: 'Email Address *',
                   prefixIcon: Icon(Icons.email),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -518,7 +509,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                 controller: _phoneController,
                 keyboardType: TextInputType.phone,
                 decoration: InputDecoration(
-                  labelText: 'Phone Number',
+                  labelText: 'Phone Number *',
                   prefixIcon: Icon(Icons.phone),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -540,7 +531,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                   child: TextFormField(
                     controller: _dobController,
                     decoration: InputDecoration(
-                      labelText: 'Date of Birth',
+                      labelText: 'Date of Birth *',
                       prefixIcon: Icon(Icons.calendar_today),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -561,7 +552,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
               DropdownButtonFormField<String>(
                 value: _selectedGender,
                 decoration: InputDecoration(
-                  labelText: 'Gender',
+                  labelText: 'Gender *',
                   prefixIcon: Icon(Icons.wc),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -586,7 +577,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                 controller: _addressController,
                 maxLines: 2,
                 decoration: InputDecoration(
-                  labelText: 'Address',
+                  labelText: 'Address *',
                   prefixIcon: Icon(Icons.home),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -705,9 +696,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
               
               // Submit button
               ElevatedButton.icon(
-                onPressed: (_isLoading || (!_isCardValidated && !_effectiveCardSerialNumber.startsWith('CARD_') && !_effectiveCardSerialNumber.startsWith('MANUAL_')))
-                    ? null 
-                    : _submitForm,
+                onPressed: _isLoading ? null : _submitForm,
                 icon: _isLoading
                     ? SizedBox(
                         width: 20,
@@ -727,20 +716,31 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                 ),
               ),
               
-              // Help text for disabled button
-              if (!_isCardValidated && !_effectiveCardSerialNumber.startsWith('CARD_') && !_effectiveCardSerialNumber.startsWith('MANUAL_'))
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    'Registration is disabled because the NFC card is already registered to another patient. Please use a different card.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.red[700],
-                      fontStyle: FontStyle.italic,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
+              SizedBox(height: 16),
+              
+              // Help text
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
                 ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info, color: Colors.blue, size: 20),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Fields marked with * are required. You can edit the IC number or generate a new one using the refresh button.',
+                        style: TextStyle(
+                          color: Colors.blue[800],
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -801,6 +801,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
+                onFieldSubmitted: (_) => onAdd(),
               ),
             ),
             SizedBox(width: 8),
