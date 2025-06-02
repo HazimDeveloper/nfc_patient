@@ -38,7 +38,6 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
   bool _isLoading = false;
   String _errorMessage = '';
   bool _isCardValidated = false;
-  bool _useManualRegistration = false;
   
   DateTime? _selectedDate;
   String _effectiveCardSerialNumber = '';
@@ -54,16 +53,20 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
       _effectiveCardSerialNumber = widget.cardSerialNumber!.trim();
       _validateCard();
     } else {
-      // Allow manual registration without NFC card
-      _useManualRegistration = true;
-      _effectiveCardSerialNumber = 'MANUAL-${DateTime.now().millisecondsSinceEpoch}';
-      _isCardValidated = true;
+      // No card serial provided - navigate back with error
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('NFC card is required for patient registration'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        Navigator.pop(context);
+      });
     }
   }
   
   Future<void> _validateCard() async {
-    if (_useManualRegistration) return;
-    
     try {
       final databaseService = DatabaseService();
       final cardCheck = await databaseService.checkCardRegistration(_effectiveCardSerialNumber);
@@ -73,7 +76,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
         _showCardAlreadyRegisteredDialog(existingPatient);
         setState(() {
           _isCardValidated = false;
-          _errorMessage = 'This NFC card is already registered to another patient.';
+          _errorMessage = 'This NFC card is already registered to ${existingPatient['name']}.';
         });
       } else {
         setState(() {
@@ -84,7 +87,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     } catch (e) {
       setState(() {
         _isCardValidated = false;
-        _errorMessage = 'Unable to validate NFC card. You can proceed with manual registration.';
+        _errorMessage = 'Unable to validate NFC card: ${e.toString()}';
       });
     }
   }
@@ -96,9 +99,9 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            Icon(Icons.error, color: Colors.red),
+            Icon(Icons.person, color: Colors.orange),
             SizedBox(width: 8),
-            Text('Card Already Registered'),
+            Text('Patient Found'),
           ],
         ),
         content: Column(
@@ -107,21 +110,48 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
           children: [
             Text(
               'This NFC card is already registered to:',
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red[700]),
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange[700]),
             ),
             SizedBox(height: 12),
             Container(
               padding: EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.grey.withOpacity(0.1),
+                color: Colors.blue.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Name: ${existingPatient['name'] ?? 'Unknown'}'),
+                  Text('Name: ${existingPatient['name'] ?? 'Unknown'}', 
+                       style: TextStyle(fontWeight: FontWeight.bold)),
                   Text('Patient ID: ${existingPatient['patientId'] ?? 'Unknown'}'),
                   Text('Phone: ${existingPatient['phone'] ?? 'Unknown'}'),
+                  if (existingPatient['email'] != null)
+                    Text('Email: ${existingPatient['email']}'),
+                ],
+              ),
+            ),
+            SizedBox(height: 12),
+            Container(
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info, color: Colors.blue, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'The patient data is already in the system. You can view their details or assign them to a doctor if needed.',
+                      style: TextStyle(
+                        color: Colors.blue[800],
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -131,21 +161,17 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              setState(() {
-                _useManualRegistration = true;
-                _effectiveCardSerialNumber = 'MANUAL-${DateTime.now().millisecondsSinceEpoch}';
-                _isCardValidated = true;
-                _errorMessage = '';
-              });
+              Navigator.pop(context); // Go back to scan screen
             },
-            child: Text(''),
+            child: Text('Go Back'),
           ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              Navigator.pop(context);
+              Navigator.pop(context); // Go back to scan screen
+              // The scan screen will handle showing patient options
             },
-            child: Text('Use Different Card'),
+            child: Text('View Patient'),
           ),
         ],
       ),
@@ -212,14 +238,19 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     if (!_formKey.currentState!.validate()) {
       return;
     }
+
+    if (!_isCardValidated) {
+      setState(() {
+        _errorMessage = 'Please use a valid NFC card for registration';
+      });
+      return;
+    }
     
-    // Ensure we have a valid card serial number
     if (_effectiveCardSerialNumber.isEmpty) {
       setState(() {
-        _effectiveCardSerialNumber = 'MANUAL-${DateTime.now().millisecondsSinceEpoch}';
-        _useManualRegistration = true;
-        _isCardValidated = true;
+        _errorMessage = 'NFC card is required for registration';
       });
+      return;
     }
     
     setState(() {
@@ -250,7 +281,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Patient registered successfully!'),
+            content: Text('Patient registered successfully with NFC card!'),
             backgroundColor: Colors.green,
           ),
         );
@@ -286,143 +317,149 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
           child: ListView(
             padding: EdgeInsets.all(16),
             children: [
-              // Registration Type Card
-              _buildRegistrationTypeCard(),
+              // NFC Card Information
+              _buildNFCCardInfoCard(),
               SizedBox(height: 24),
               
-              // Required Fields Section
-              _buildSectionHeader('Required Information', Icons.star, Colors.red),
+              // Card validation error
+              if (!_isCardValidated && _errorMessage.isNotEmpty)
+                _buildValidationErrorCard(),
               
-              _buildRequiredTextField(
-                controller: _nameController,
-                label: 'Full Name',
-                icon: Icons.person,
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Patient name is required';
-                  }
-                  return null;
-                },
-              ),
-              SizedBox(height: 16),
-              
-              _buildRequiredTextField(
-                controller: _emailController,
-                label: 'Email Address',
-                icon: Icons.email,
-                keyboardType: TextInputType.emailAddress,
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Email address is required';
-                  }
-                  if (!value.contains('@')) {
-                    return 'Please enter a valid email';
-                  }
-                  return null;
-                },
-              ),
-              SizedBox(height: 16),
-              
-              _buildRequiredTextField(
-                controller: _phoneController,
-                label: 'Phone Number',
-                icon: Icons.phone,
-                keyboardType: TextInputType.phone,
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Phone number is required';
-                  }
-                  return null;
-                },
-              ),
-              SizedBox(height: 16),
-              
-              // Date of Birth with required indicator
-              _buildRequiredDateField(),
-              SizedBox(height: 16),
-              
-              // Gender with required indicator
-              _buildRequiredGenderField(),
-              SizedBox(height: 16),
-              
-              _buildRequiredTextField(
-                controller: _addressController,
-                label: 'Address',
-                icon: Icons.home,
-                maxLines: 2,
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Address is required';
-                  }
-                  return null;
-                },
-              ),
-              SizedBox(height: 24),
-              
-              // Optional Medical Information Section
-              _buildSectionHeader('Medical Information (Optional)', Icons.medical_information, Colors.blue),
-              
-              _buildOptionalDropdown(
-                value: _bloodType,
-                label: 'Blood Type',
-                icon: Icons.bloodtype,
-                items: [null, 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'],
-                onChanged: (value) => setState(() => _bloodType = value),
-              ),
-              SizedBox(height: 16),
-              
-              _buildOptionalTextField(
-                controller: _emergencyContactController,
-                label: 'Emergency Contact',
-                icon: Icons.emergency,
-              ),
-              SizedBox(height: 24),
-              
-              // Medical Lists Section
-              _buildSectionHeader('Medical History (Optional)', Icons.history, Colors.orange),
-              
-              _buildListSection(
-                title: 'Allergies',
-                icon: Icons.dangerous,
-                items: _allergies,
-                controller: _newAllergyController,
-                onAdd: () => _addItem(_newAllergyController, _allergies),
-                onRemove: (index) => _removeItem(index, _allergies),
-                color: Colors.red,
-              ),
-              SizedBox(height: 16),
-              
-              _buildListSection(
-                title: 'Current Medications',
-                icon: Icons.medication,
-                items: _medications,
-                controller: _newMedicationController,
-                onAdd: () => _addItem(_newMedicationController, _medications),
-                onRemove: (index) => _removeItem(index, _medications),
-                color: Colors.blue,
-              ),
-              SizedBox(height: 16),
-              
-              _buildListSection(
-                title: 'Medical Conditions',
-                icon: Icons.healing,
-                items: _conditions,
-                controller: _newConditionController,
-                onAdd: () => _addItem(_newConditionController, _conditions),
-                onRemove: (index) => _removeItem(index, _conditions),
-                color: Colors.orange,
-              ),
-              SizedBox(height: 32),
-              
-              // Error message
-              if (_errorMessage.isNotEmpty) _buildErrorMessage(),
-              
-              // Submit button
-              _buildSubmitButton(),
-              SizedBox(height: 16),
-              
-              // Help text
-              _buildHelpText(),
+              if (_isCardValidated) ...[
+                // Required Fields Section
+                _buildSectionHeader('Required Information', Icons.star, Colors.red),
+                
+                _buildRequiredTextField(
+                  controller: _nameController,
+                  label: 'Full Name',
+                  icon: Icons.person,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Patient name is required';
+                    }
+                    return null;
+                  },
+                ),
+                SizedBox(height: 16),
+                
+                _buildRequiredTextField(
+                  controller: _emailController,
+                  label: 'Email Address',
+                  icon: Icons.email,
+                  keyboardType: TextInputType.emailAddress,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Email address is required';
+                    }
+                    if (!value.contains('@')) {
+                      return 'Please enter a valid email';
+                    }
+                    return null;
+                  },
+                ),
+                SizedBox(height: 16),
+                
+                _buildRequiredTextField(
+                  controller: _phoneController,
+                  label: 'Phone Number',
+                  icon: Icons.phone,
+                  keyboardType: TextInputType.phone,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Phone number is required';
+                    }
+                    return null;
+                  },
+                ),
+                SizedBox(height: 16),
+                
+                // Date of Birth with required indicator
+                _buildRequiredDateField(),
+                SizedBox(height: 16),
+                
+                // Gender with required indicator
+                _buildRequiredGenderField(),
+                SizedBox(height: 16),
+                
+                _buildRequiredTextField(
+                  controller: _addressController,
+                  label: 'Address',
+                  icon: Icons.home,
+                  maxLines: 2,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Address is required';
+                    }
+                    return null;
+                  },
+                ),
+                SizedBox(height: 24),
+                
+                // Optional Medical Information Section
+                _buildSectionHeader('Medical Information (Optional)', Icons.medical_information, Colors.blue),
+                
+                _buildOptionalDropdown(
+                  value: _bloodType,
+                  label: 'Blood Type',
+                  icon: Icons.bloodtype,
+                  items: [null, 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'],
+                  onChanged: (value) => setState(() => _bloodType = value),
+                ),
+                SizedBox(height: 16),
+                
+                _buildOptionalTextField(
+                  controller: _emergencyContactController,
+                  label: 'Emergency Contact',
+                  icon: Icons.emergency,
+                ),
+                SizedBox(height: 24),
+                
+                // Medical Lists Section
+                _buildSectionHeader('Medical History (Optional)', Icons.history, Colors.orange),
+                
+                _buildListSection(
+                  title: 'Allergies',
+                  icon: Icons.dangerous,
+                  items: _allergies,
+                  controller: _newAllergyController,
+                  onAdd: () => _addItem(_newAllergyController, _allergies),
+                  onRemove: (index) => _removeItem(index, _allergies),
+                  color: Colors.red,
+                ),
+                SizedBox(height: 16),
+                
+                _buildListSection(
+                  title: 'Current Medications',
+                  icon: Icons.medication,
+                  items: _medications,
+                  controller: _newMedicationController,
+                  onAdd: () => _addItem(_newMedicationController, _medications),
+                  onRemove: (index) => _removeItem(index, _medications),
+                  color: Colors.blue,
+                ),
+                SizedBox(height: 16),
+                
+                _buildListSection(
+                  title: 'Medical Conditions',
+                  icon: Icons.healing,
+                  items: _conditions,
+                  controller: _newConditionController,
+                  onAdd: () => _addItem(_newConditionController, _conditions),
+                  onRemove: (index) => _removeItem(index, _conditions),
+                  color: Colors.orange,
+                ),
+                SizedBox(height: 32),
+                
+                // Error message
+                if (_errorMessage.isNotEmpty && _isCardValidated) _buildErrorMessage(),
+                
+                // Submit button
+                _buildSubmitButton(),
+                SizedBox(height: 16),
+                
+                // Help text
+                _buildHelpText(),
+              ],
             ],
           ),
         ),
@@ -430,7 +467,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     );
   }
   
-  Widget _buildRegistrationTypeCard() {
+  Widget _buildNFCCardInfoCard() {
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -442,16 +479,16 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
             Row(
               children: [
                 Icon(
-                  _useManualRegistration ? Icons.edit : Icons.contactless,
-                  color: _useManualRegistration ? Colors.orange : Colors.green,
+                  Icons.contactless,
+                  color: _isCardValidated ? Colors.green : Colors.orange,
                 ),
                 SizedBox(width: 8),
                 Text(
-                  _useManualRegistration ? 'Manual Registration' : 'NFC Card Registration',
+                  'NFC Card Registration',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: _useManualRegistration ? Colors.orange[800] : Colors.green[800],
+                    color: _isCardValidated ? Colors.green[800] : Colors.orange[800],
                   ),
                 ),
               ],
@@ -461,10 +498,10 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
               width: double.infinity,
               padding: EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: (_useManualRegistration ? Colors.orange : Colors.green).withOpacity(0.1),
+                color: (_isCardValidated ? Colors.green : Colors.orange).withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: _useManualRegistration ? Colors.orange : Colors.green,
+                  color: _isCardValidated ? Colors.green : Colors.orange,
                   width: 1
                 ),
               ),
@@ -472,7 +509,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Patient ID: $_effectiveCardSerialNumber',
+                    'Card Serial Number: $_effectiveCardSerialNumber',
                     style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 14,
@@ -481,9 +518,9 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    _useManualRegistration 
-                        ? 'This patient will be registered without an NFC card.'
-                        : 'This NFC card will be linked to the patient.',
+                    _isCardValidated 
+                        ? 'This NFC card is available and will be linked to the patient.'
+                        : 'Validating NFC card...',
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.grey[700],
@@ -491,6 +528,63 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildValidationErrorCard() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.red.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.red),
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Icon(Icons.error, color: Colors.red, size: 24),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Card Validation Failed',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red[800],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 8),
+            Text(
+              _errorMessage,
+              style: TextStyle(
+                color: Colors.red[700],
+                fontSize: 14,
+              ),
+            ),
+            SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => Navigator.pop(context),
+                icon: Icon(Icons.arrow_back),
+                label: Text('Go Back and Scan Different Card'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red,
+                  side: BorderSide(color: Colors.red),
+                ),
               ),
             ),
           ],
@@ -786,7 +880,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
   
   Widget _buildSubmitButton() {
     return ElevatedButton.icon(
-      onPressed: _isLoading ? null : _submitForm,
+      onPressed: (_isLoading || !_isCardValidated) ? null : _submitForm,
       icon: _isLoading
           ? SizedBox(
               width: 20,
@@ -797,11 +891,11 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
               ),
             )
           : Icon(Icons.person_add),
-      label: Text(_isLoading ? 'Registering...' : 'Register Patient'),
+      label: Text(_isLoading ? 'Registering...' : 'Register Patient with NFC Card'),
       style: ElevatedButton.styleFrom(
         padding: EdgeInsets.symmetric(vertical: 16),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        backgroundColor: Theme.of(context).primaryColor,
+        backgroundColor: _isCardValidated ? Theme.of(context).primaryColor : Colors.grey,
         foregroundColor: Colors.white,
       ),
     );
@@ -822,7 +916,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
               Icon(Icons.info, color: Colors.blue, size: 20),
               SizedBox(width: 8),
               Text(
-                'Registration Help',
+                'NFC Card Registration',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   color: Colors.blue[800],
@@ -832,10 +926,11 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
           ),
           SizedBox(height: 8),
           Text(
+            '• NFC card is required for patient registration\n'
+            '• Each card can only be registered to one patient\n'
+            '• The card serves as the patient\'s unique identification\n'
             '• Fields marked with * are required and must be filled\n'
-            '• Medical information is optional but helpful for healthcare providers\n'
-            '• You can register without an NFC card if needed\n'
-            '• All information can be updated later by hospital staff',
+            '• Medical information is optional but helpful for healthcare providers',
             style: TextStyle(
               fontSize: 12,
               color: Colors.blue[700],

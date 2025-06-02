@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:nfc_patient_registration/services/nfc_service.dart';
 import 'package:nfc_patient_registration/services/database_service.dart';
 import 'package:nfc_patient_registration/screens/nurse/patient_registration.dart';
+import 'package:nfc_patient_registration/screens/nurse/assign_doctor.dart';
+import 'package:nfc_patient_registration/screens/nurse/patient_detail_screen.dart';
 
 class NFCCardRegistration extends StatefulWidget {
   @override
@@ -57,7 +59,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
           _statusMessage = 'NFC is not available on this device';
           _error = true;
           _isScanning = false;
-          _detailedErrorMessage = 'This device does not support NFC or NFC is disabled';
+          _detailedErrorMessage = 'This device does not support NFC or NFC is disabled. Please enable NFC in device settings and try again.';
         });
         return;
       }
@@ -81,7 +83,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
             _statusMessage = 'No card detected or scan failed';
             _error = true;
             _isScanning = false;
-            _detailedErrorMessage = 'Please try again and ensure the card is properly positioned';
+            _detailedErrorMessage = 'Please try again and ensure the card is properly positioned on the back of your device.';
           });
           return;
         }
@@ -157,17 +159,17 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
       final cardCheck = await databaseService.checkCardRegistration(serialNumber);
       
       if (cardCheck != null && cardCheck['isRegistered'] == true) {
-        // Card is already registered
+        // Card is already registered - show patient found
         final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
         
         setState(() {
           _cardSerialNumber = serialNumber;
           _existingPatientData = existingPatient;
-          _success = false;
-          _error = true;
+          _success = true; // Changed to true - patient found successfully
+          _error = false;  // Not an error - just already registered
           _isScanning = false;
-          _statusMessage = 'Card already registered';
-          _detailedErrorMessage = 'This NFC card is already registered to another patient';
+          _statusMessage = 'Patient found';
+          _detailedErrorMessage = null;
         });
       } else {
         // Card is available for registration
@@ -208,31 +210,34 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
   
   // Navigate to patient registration with the card serial number
   void _proceedToRegistration() {
-    final effectiveSerialNumber = _cardSerialNumber ?? 'MANUAL-${DateTime.now().millisecondsSinceEpoch}';
-    
-    debugPrint('Proceeding to registration with serial: $effectiveSerialNumber');
-    
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => PatientRegistrationScreen(
-          cardSerialNumber: effectiveSerialNumber,
+    if (_cardSerialNumber == null || _cardSerialNumber!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Invalid card serial number. Please scan the card again.'),
+          backgroundColor: Colors.red,
         ),
-      ),
-    );
-  }
-  
-  // Proceed without NFC card (manual entry)
-  void _proceedWithoutCard() {
-    final manualSerialNumber = 'MANUAL-${DateTime.now().millisecondsSinceEpoch}';
+      );
+      return;
+    }
+
+    // Double-check that this is not an already registered card
+    if (_existingPatientData != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('This card is already registered to ${_existingPatientData!['name']}. Use patient actions instead.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
     
-    debugPrint('Proceeding without NFC card, using manual serial: $manualSerialNumber');
+    debugPrint('Proceeding to registration with serial: $_cardSerialNumber');
     
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => PatientRegistrationScreen(
-          cardSerialNumber: manualSerialNumber,
+          cardSerialNumber: _cardSerialNumber!,
         ),
       ),
     );
@@ -381,7 +386,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                     ),
                     SizedBox(height: 8),
                     Text(
-                      'Each NFC card can only be registered to ONE patient. Before registering a new patient, scan their NFC card to ensure it\'s not already in use.',
+                      'Scan an NFC card to register a new patient or view existing patient information. Each card can only be registered to one patient.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 16,
@@ -494,14 +499,14 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
               
               SizedBox(height: 16),
               
-              // Display card serial if available
+              // Display card info when successfully scanned
               if (_cardSerialNumber != null && _success) ...[
                 Container(
                   padding: EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
+                    color: (_existingPatientData != null ? Colors.blue : Colors.green).withOpacity(0.1),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.green.withOpacity(0.3)),
+                    border: Border.all(color: (_existingPatientData != null ? Colors.blue : Colors.green).withOpacity(0.3)),
                   ),
                   child: Column(
                     children: [
@@ -509,91 +514,74 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
-                            Icons.check_circle,
-                            color: Colors.green,
+                            _existingPatientData != null ? Icons.person : Icons.check_circle,
+                            color: _existingPatientData != null ? Colors.blue : Colors.green,
                             size: 20,
                           ),
                           SizedBox(width: 8),
                           Text(
-                            'Card Available for Registration',
+                            _existingPatientData != null ? 'Patient Found' : 'Card Available for Registration',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
-                              color: Colors.green[800],
+                              color: (_existingPatientData != null ? Colors.blue : Colors.green)[800],
                             ),
                           ),
                         ],
                       ),
                       SizedBox(height: 8),
-                      Text(
-                        'Serial Number:',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w500,
-                          color: Colors.grey[700],
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      SelectableText(
-                        _cardSerialNumber!,
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 16,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              
-              // Show existing patient info if card is already registered
-              if (_existingPatientData != null && _error) ...[
-                Container(
-                  padding: EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.red.withOpacity(0.3)),
-                  ),
-                  child: Column(
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.person,
-                            color: Colors.red,
-                            size: 20,
+                      
+                      if (_existingPatientData != null) ...[
+                        // Show patient info
+                        Text(
+                          'Patient: ${_existingPatientData!['name'] ?? 'Unknown'}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                            fontSize: 16,
                           ),
-                          SizedBox(width: 8),
+                          textAlign: TextAlign.center,
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'ID: ${_existingPatientData!['patientId'] ?? 'Unknown'}',
+                          style: TextStyle(
+                            color: Colors.grey[700],
+                            fontSize: 14,
+                            fontFamily: 'monospace',
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        if (_existingPatientData!['phone'] != null) ...[
+                          SizedBox(height: 4),
                           Text(
-                            'Card Already Registered',
+                            'Phone: ${_existingPatientData!['phone']}',
                             style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: Colors.red[800],
+                              color: Colors.grey[700],
+                              fontSize: 14,
                             ),
+                            textAlign: TextAlign.center,
                           ),
                         ],
-                      ),
-                      SizedBox(height: 8),
-                      Text(
-                        'Registered to: ${_existingPatientData!['name'] ?? 'Unknown'}',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
+                      ] else ...[
+                        // Show card serial for new registration
+                        Text(
+                          'Card Serial Number:',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w500,
+                            color: Colors.grey[700],
+                          ),
                         ),
-                        textAlign: TextAlign.center,
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        'Patient ID: ${_existingPatientData!['patientId'] ?? 'Unknown'}',
-                        style: TextStyle(
-                          color: Colors.grey[700],
-                          fontSize: 14,
+                        SizedBox(height: 4),
+                        SelectableText(
+                          _cardSerialNumber!,
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 16,
+                            color: Colors.black87,
+                          ),
                         ),
-                        textAlign: TextAlign.center,
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -616,27 +604,119 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
               else if (_success && _cardSerialNumber != null)
                 Column(
                   children: [
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _proceedToRegistration,
-                        icon: Icon(Icons.arrow_forward),
-                        label: Text('Proceed to Patient Registration'),
-                        style: ElevatedButton.styleFrom(
-                          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                    if (_existingPatientData != null) ...[
+                      // Patient already registered - show patient actions
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => PatientDetailsScreen(
+                                  patient: _existingPatientData!,
+                                ),
+                              ),
+                            );
+                          },
+                          icon: Icon(Icons.visibility),
+                          label: Text('View Patient Details'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            foregroundColor: Colors.white,
+                            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                         ),
                       ),
-                    ),
+                      
+                      SizedBox(height: 12),
+                      
+                      // Check if patient needs doctor assignment
+                      if (_existingPatientData!['currentAppointment'] == null)
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => AssignDoctorScreen(
+                                    patientId: _existingPatientData!['patientId'],
+                                    patientName: _existingPatientData!['name'],
+                                  ),
+                                ),
+                              );
+                            },
+                            icon: Icon(Icons.assignment_ind),
+                            label: Text('Assign Doctor & Room'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        Container(
+                          width: double.infinity,
+                          padding: EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.green.withOpacity(0.3)),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.check_circle, color: Colors.green, size: 20),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Patient already assigned to doctor',
+                                  style: TextStyle(
+                                    color: Colors.green[800],
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ] else ...[
+                      // New card - proceed to registration
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _proceedToRegistration,
+                          icon: Icon(Icons.person_add),
+                          label: Text('Register New Patient'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                    
                     SizedBox(height: 12),
+                    
+                    // Common action - scan different card
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
                         onPressed: () {
                           setState(() {
                             _cardSerialNumber = null;
+                            _existingPatientData = null;
                             _success = false;
                             _statusMessage = 'Tap "Scan Card" to begin';
                           });
@@ -696,101 +776,65 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                         ),
                       ),
                     ),
-                    SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(child: Divider()),
-                        Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 16),
-                          child: Text(
-                            'OR',
-                            style: TextStyle(
-                              color: Colors.grey[600],
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        Expanded(child: Divider()),
-                      ],
-                    ),
-                    SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _proceedWithoutCard,
-                        icon: Icon(Icons.person_add),
-                        label: Text('Register Without NFC'),
-                        style: OutlinedButton.styleFrom(
-                          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                    ),
                   ],
                 )
               else
-                Column(
-                  children: [
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _startNFCScanning,
-                        icon: Icon(Icons.contactless),
-                        label: Text('Scan NFC Card'),
-                        style: ElevatedButton.styleFrom(
-                          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _startNFCScanning,
+                    icon: Icon(Icons.contactless),
+                    label: Text('Scan NFC Card'),
+                    style: ElevatedButton.styleFrom(
+                      padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(child: Divider()),
-                        Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 16),
-                          child: Text(
-                            'OR',
+                  ),
+                ),
+              
+              // Help text
+              if (!_isScanning) ...[
+                SizedBox(height: 24),
+                Container(
+                  padding: EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.help_outline, color: Colors.grey[600], size: 20),
+                          SizedBox(width: 8),
+                          Text(
+                            'Need Help?',
                             style: TextStyle(
-                              color: Colors.grey[600],
                               fontWeight: FontWeight.bold,
+                              color: Colors.grey[800],
                             ),
                           ),
-                        ),
-                        Expanded(child: Divider()),
-                      ],
-                    ),
-                    SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _proceedWithoutCard,
-                        icon: Icon(Icons.person_add),
-                        label: Text('Register Without NFC'),
-                        style: OutlinedButton.styleFrom(
-                          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        '• Place the NFC card flat against the back of your device\n'
+                        '• Keep the card in contact until scanning completes\n'
+                        '• If card is already registered, you\'ll see patient details\n'
+                        '• New cards can be used to register new patients\n'
+                        '• Ensure NFC is enabled in your device settings',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[700],
                         ),
                       ),
-                    ),
-                    SizedBox(height: 8),
-                    Text(
-                      'A unique ID will be generated automatically',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                        fontStyle: FontStyle.italic,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
+              ],
             ],
           ),
         ),

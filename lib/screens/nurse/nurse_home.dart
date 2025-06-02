@@ -75,6 +75,7 @@ class _NurseHomeState extends State<NurseHome> {
         },
         icon: Icon(Icons.person_add),
         label: Text('Register Patient'),
+        backgroundColor: Theme.of(context).primaryColor,
       ),
     );
   }
@@ -118,28 +119,41 @@ class _NurseHomeState extends State<NurseHome> {
 
     return Column(
       children: [
-        // Quick actions bar
+        // Quick actions section with better spacing
         Container(
-          padding: EdgeInsets.all(16),
-          color: Colors.grey.withOpacity(0.1),
+          margin: EdgeInsets.all(16),
+          padding: EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.withOpacity(0.1),
+                spreadRadius: 1,
+                blurRadius: 6,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 'Quick Actions',
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: Theme.of(context).primaryColor,
                 ),
               ),
-              SizedBox(height: 12),
+              SizedBox(height: 20),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   _buildActionButton(
                     icon: Icons.contactless,
                     label: 'Scan NFC Card',
+                    color: Colors.blue,
                     onPressed: () {
                       Navigator.push(
                         context,
@@ -147,7 +161,6 @@ class _NurseHomeState extends State<NurseHome> {
                           builder: (context) => NFCScanScreen(
                             action: NFCAction.read,
                             onDataRead: (data) {
-                              // Handle NFC data read
                               if (data.containsKey('cardSerialNumber') || data.containsKey('id')) {
                                 final cardSerialNumber = data['cardSerialNumber'] ?? data['id'];
                                 _checkPatientByCardSerial(cardSerialNumber);
@@ -161,6 +174,7 @@ class _NurseHomeState extends State<NurseHome> {
                   _buildActionButton(
                     icon: Icons.person_add,
                     label: 'New Patient',
+                    color: Colors.green,
                     onPressed: () {
                       Navigator.push(
                         context,
@@ -173,6 +187,7 @@ class _NurseHomeState extends State<NurseHome> {
                   _buildActionButton(
                     icon: Icons.people,
                     label: 'All Patients',
+                    color: Colors.orange,
                     onPressed: () {
                       Navigator.push(
                         context,
@@ -188,95 +203,489 @@ class _NurseHomeState extends State<NurseHome> {
           ),
         ),
         
-        // New patients section
+        // Statistics card
+        Container(
+          margin: EdgeInsets.symmetric(horizontal: 16),
+          padding: EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                Theme.of(context).primaryColor.withOpacity(0.8),
+                Theme.of(context).primaryColor,
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Theme.of(context).primaryColor.withOpacity(0.3),
+                spreadRadius: 1,
+                blurRadius: 8,
+                offset: Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.assignment_ind,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Patients Awaiting Assignment',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      '${_newPatients.length}',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  _newPatients.isEmpty ? 'All Done!' : 'Action Needed',
+                  style: TextStyle(
+                    color: Theme.of(context).primaryColor,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        SizedBox(height: 24),
+        
+        // Patients section header
         Padding(
-          padding: EdgeInsets.all(16),
+          padding: EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 'New Patients',
                 style: TextStyle(
-                  fontSize: 18,
+                  fontSize: 20,
                   fontWeight: FontWeight.bold,
+                  color: Colors.black87,
                 ),
               ),
-              Row(
-                children: [
-                  Text(
-                    '${_newPatients.length} need assignment',
-                    style: TextStyle(
-                      color: _newPatients.isNotEmpty
-                          ? Colors.orange
-                          : Colors.green,
-                      fontWeight: FontWeight.bold,
-                    ),
+              if (_newPatients.isNotEmpty)
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => NursePatientListScreen(),
+                      ),
+                    ).then((_) => _loadNewPatients());
+                  },
+                  icon: Icon(Icons.arrow_forward, size: 18),
+                  label: Text('View All'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Theme.of(context).primaryColor,
                   ),
-                  SizedBox(width: 8),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => NursePatientListScreen(),
-                        ),
-                      ).then((_) => _loadNewPatients());
-                    },
-                    child: Text('View All'),
-                  ),
-                ],
-              ),
+                ),
             ],
           ),
         ),
         
+        SizedBox(height: 8),
+        
         // Patient list
         Expanded(
           child: _newPatients.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.check_circle,
-                        size: 60,
-                        color: Colors.green,
-                      ),
-                      SizedBox(height: 16),
-                      Text(
-                        'All patients have been assigned',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.grey[600],
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => NursePatientListScreen(),
-                            ),
-                          ).then((_) => _loadNewPatients());
-                        },
-                        icon: Icon(Icons.people),
-                        label: Text('View All Patients'),
-                      ),
-                    ],
-                  ),
-                )
+              ? _buildEmptyState()
               : ListView.builder(
                   padding: EdgeInsets.symmetric(horizontal: 16),
                   itemCount: _newPatients.length,
                   itemBuilder: (context, index) {
                     final patient = _newPatients[index];
-                    return _buildPatientCard(patient);
+                    return _buildPatientCard(patient, index);
                   },
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.green.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.check_circle_outline,
+              size: 64,
+              color: Colors.green,
+            ),
+          ),
+          SizedBox(height: 24),
+          Text(
+            'All Caught Up!',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+            ),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'All patients have been assigned to doctors',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey[600],
+            ),
+            textAlign: TextAlign.center,
+          ),
+          SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => NursePatientListScreen(),
+                ),
+              ).then((_) => _loadNewPatients());
+            },
+            icon: Icon(Icons.people),
+            label: Text('View All Patients'),
+            style: ElevatedButton.styleFrom(
+              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    return Column(
+      children: [
+        Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: color.withOpacity(0.3),
+              width: 2,
+            ),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onPressed,
+              borderRadius: BorderRadius.circular(32),
+              child: Icon(
+                icon,
+                size: 28,
+                color: color,
+              ),
+            ),
+          ),
+        ),
+        SizedBox(height: 8),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPatientCard(Map<String, dynamic> patient, int index) {
+    final registrationDate = patient['registrationDate']?.toDate();
+    final formattedDate = registrationDate != null
+        ? '${registrationDate.day}/${registrationDate.month}/${registrationDate.year}'
+        : 'Unknown';
+
+    return Container(
+      margin: EdgeInsets.only(bottom: 16),
+      child: Card(
+        elevation: 3,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              colors: [
+                Colors.white,
+                Colors.grey.withOpacity(0.05),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Patient header
+                Row(
+                  children: [
+                    Hero(
+                      tag: 'patient_avatar_${patient['patientId']}',
+                      child: Container(
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Theme.of(context).primaryColor,
+                              Theme.of(context).primaryColor.withOpacity(0.8),
+                            ],
+                          ),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Theme.of(context).primaryColor.withOpacity(0.3),
+                              spreadRadius: 1,
+                              blurRadius: 4,
+                              offset: Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: Text(
+                            patient['name'].substring(0, 1).toUpperCase(),
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 20,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            patient['name'] ?? 'Unknown',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Registered: $formattedDate',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Colors.orange.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.schedule,
+                            size: 14,
+                            color: Colors.orange[700],
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            'New',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.orange[700],
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                
+                SizedBox(height: 16),
+                
+                // Patient details
+                Container(
+                  padding: EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Colors.grey.withOpacity(0.1),
+                      width: 1,
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      _buildInfoRow(
+                        icon: Icons.calendar_today,
+                        label: 'Date of Birth',
+                        value: patient['dateOfBirth'] ?? 'Not recorded',
+                      ),
+                      _buildInfoRow(
+                        icon: Icons.wc,
+                        label: 'Gender',
+                        value: patient['gender'] ?? 'Not recorded',
+                      ),
+                      _buildInfoRow(
+                        icon: Icons.phone,
+                        label: 'Phone',
+                        value: patient['phone'] ?? 'Not recorded',
+                      ),
+                      if (patient['cardSerialNumber'] != null)
+                        _buildInfoRow(
+                          icon: Icons.contactless,
+                          label: 'Card ID',
+                          value: patient['cardSerialNumber'],
+                          valueStyle: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            color: Colors.blue[700],
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                
+                SizedBox(height: 20),
+                
+                // Action button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => AssignDoctorScreen(
+                            patientId: patient['patientId'],
+                            patientName: patient['name'],
+                          ),
+                        ),
+                      ).then((_) => _loadNewPatients());
+                    },
+                    icon: Icon(Icons.assignment_ind),
+                    label: Text('Assign Doctor & Room'),
+                    style: ElevatedButton.styleFrom(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 2,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    TextStyle? valueStyle,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 16,
+            color: Colors.grey[600],
+          ),
+          SizedBox(width: 8),
+          Text(
+            '$label:',
+            style: TextStyle(
+              fontWeight: FontWeight.w500,
+              color: Colors.grey[700],
+              fontSize: 13,
+            ),
+          ),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              style: valueStyle ?? TextStyle(
+                color: Colors.black87,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -412,198 +821,5 @@ class _NurseHomeState extends State<NurseHome> {
         ),
       );
     }
-  }
-
-  Widget _buildActionButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onPressed,
-  }) {
-    return Column(
-      children: [
-        ElevatedButton(
-          onPressed: onPressed,
-          style: ElevatedButton.styleFrom(
-            shape: CircleBorder(),
-            padding: EdgeInsets.all(16),
-          ),
-          child: Icon(
-            icon,
-            size: 24,
-          ),
-        ),
-        SizedBox(height: 8),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-          ),
-          textAlign: TextAlign.center,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPatientCard(Map<String, dynamic> patient) {
-    final registrationDate = patient['registrationDate']?.toDate();
-    final formattedDate = registrationDate != null
-        ? '${registrationDate.day}/${registrationDate.month}/${registrationDate.year}'
-        : 'Unknown';
-
-    return Card(
-      margin: EdgeInsets.only(bottom: 16),
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Patient name and registration date
-            Row(
-              children: [
-                CircleAvatar(
-                  backgroundColor: Theme.of(context).primaryColor,
-                  child: Text(
-                    patient['name'].substring(0, 1).toUpperCase(),
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        patient['name'] ?? 'Unknown',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        'Registered: $formattedDate',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    'New',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.orange,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            Divider(height: 24),
-            
-            // Patient details
-            _buildInfoRow(
-              icon: Icons.calendar_today,
-              label: 'Date of Birth',
-              value: patient['dateOfBirth'] ?? 'Not recorded',
-            ),
-            _buildInfoRow(
-              icon: Icons.wc,
-              label: 'Gender',
-              value: patient['gender'] ?? 'Not recorded',
-            ),
-            _buildInfoRow(
-              icon: Icons.phone,
-              label: 'Phone',
-              value: patient['phone'] ?? 'Not recorded',
-            ),
-            if (patient['cardSerialNumber'] != null)
-              _buildInfoRow(
-                icon: Icons.contactless,
-                label: 'Card ID',
-                value: patient['cardSerialNumber'],
-              ),
-            
-            SizedBox(height: 16),
-            
-            // Assign doctor button
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => AssignDoctorScreen(
-                        patientId: patient['patientId'],
-                        patientName: patient['name'],
-                      ),
-                    ),
-                  ).then((_) => _loadNewPatients());
-                },
-                icon: Icon(Icons.assignment_ind),
-                label: Text('Assign Doctor & Room'),
-                style: ElevatedButton.styleFrom(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInfoRow({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
-      child: Row(
-        children: [
-          Icon(
-            icon,
-            size: 18,
-            color: Colors.grey[600],
-          ),
-          SizedBox(width: 8),
-          Text(
-            '$label:',
-            style: TextStyle(
-              fontWeight: FontWeight.w500,
-              color: Colors.grey[700],
-            ),
-          ),
-          SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              value,
-              style: TextStyle(
-                color: Colors.black87,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
