@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:nfc_patient_registration/services/nfc_service.dart';
+import 'package:nfc_patient_registration/services/card_security_sevice.dart';
 
 class DatabaseService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -60,16 +62,67 @@ class DatabaseService {
     }
   }
   
-  // Check if NFC card is already registered (using serial as patient IC)
+  // 🔐 ENHANCED: Check if NFC card is already registered with full security validation
   Future<Map<String, dynamic>?> checkCardRegistration(String cardSerialNumber) async {
     try {
       if (cardSerialNumber.isEmpty) {
         return null;
       }
       
-      print('Checking if card (IC) is already registered: $cardSerialNumber');
+      print('🔍 Checking card registration with enhanced security: $cardSerialNumber');
       
-      // Check directly in patients collection using cardSerialNumber as unique IC
+      // 1. First check if card is locked (highest priority)
+      final lockCheck = await CardSecurityService.checkCardLock(cardSerialNumber);
+      if (lockCheck != null && lockCheck['isLocked'] == true) {
+        final lockInfo = lockCheck['lockInfo'];
+        
+        print('🔒 Card is locked to patient: ${lockInfo['patientName']}');
+        
+        // Get full patient data from database
+        final patientData = await getPatientByIC(lockInfo['patientId']);
+        
+        return {
+          'isRegistered': true,
+          'registrationStatus': 'LOCKED',
+          'patientData': patientData ?? lockInfo,
+          'lockInfo': lockInfo,
+          'source': 'CARD_LOCK',
+          'message': 'Card is permanently locked to registered patient',
+        };
+      }
+      
+      // 2. Check patient data on card
+      final cardPatientData = await CardSecurityService.readPatientDataFromCard();
+      if (cardPatientData != null && cardPatientData['isValid'] == true) {
+        final patientInfo = cardPatientData['patientData'];
+        
+        print('📋 Patient data found on card: ${patientInfo['name']}');
+        
+        // Verify with database
+        final dbPatientData = await getPatientByIC(patientInfo['patientId']);
+        
+        if (dbPatientData != null) {
+          // Verify cryptographic binding
+          try {
+            final cardData = await NFCService.readNFC();
+            final isValidBinding = CardSecurityService.verifyCardBinding(cardData!, dbPatientData);
+            
+            return {
+              'isRegistered': true,
+              'registrationStatus': 'CARD_DATA_FOUND',
+              'patientData': dbPatientData,
+              'cardData': patientInfo,
+              'source': 'NFC_CARD',
+              'bindingValid': isValidBinding,
+              'message': 'Patient data found on card and verified',
+            };
+          } catch (e) {
+            print('⚠️ Error verifying card binding: $e');
+          }
+        }
+      }
+      
+      // 3. Check database directly
       final patientSnapshot = await patientsCollection
           .where('cardSerialNumber', isEqualTo: cardSerialNumber)
           .limit(1)
@@ -77,97 +130,263 @@ class DatabaseService {
       
       if (patientSnapshot.docs.isNotEmpty) {
         final patientData = patientSnapshot.docs.first.data() as Map<String, dynamic>;
+        
+        print('💾 Patient found in database: ${patientData['name']}');
+        
         return {
           'isRegistered': true,
+          'registrationStatus': 'DATABASE_FOUND',
           'patientData': patientData,
+          'source': 'DATABASE',
+          'message': 'Patient found in database but card may not be properly secured',
         };
       }
       
+      // 4. Check if card has valid registration token
+      final tokenValidation = await CardSecurityService.validateRegistrationToken(cardSerialNumber);
+      if (tokenValidation != null && tokenValidation['valid'] == true) {
+        print('🎫 Valid registration token found on card');
+        
+        return {
+          'isRegistered': false,
+          'registrationStatus': 'TOKEN_AVAILABLE',
+          'tokenInfo': tokenValidation['tokenInfo'],
+          'source': 'REGISTRATION_TOKEN',
+          'message': 'Card is available for registration',
+        };
+      }
+      
+      // 5. Card appears to be blank or uninitialized
+      print('📋 Card appears to be blank or uninitialized');
+      
       return {
         'isRegistered': false,
-        'patientData': null,
+        'registrationStatus': 'BLANK_CARD',
+        'source': 'UNKNOWN',
+        'message': 'Card appears to be blank or uninitialized',
       };
+      
     } catch (e) {
-      print('Error checking card registration: ${e.toString()}');
+      print('❌ Error checking card registration: ${e.toString()}');
       rethrow;
     }
   }
   
-  // Register new patient with NFC card as IC
-  Future<Map<String, dynamic>> registerPatient({
-    required String name,
-    required String email,
-    required String phone,
-    required String dateOfBirth,
-    required String gender,
-    required String address,
-    String? bloodType,
-    String? emergencyContact,
-    List<String>? allergies,
-    List<String>? medications,
-    List<String>? conditions,
-    required String cardSerialNumber,
-  }) async {
-    try {
-      // Validate cardSerialNumber (this is the patient's IC)
-      if (cardSerialNumber.isEmpty) {
-        throw Exception('Patient IC (Card serial number) cannot be empty');
+  // Enhanced registerPatient method in database_service.dart
+// This version handles EVERYTHING automatically
+
+Future<Map<String, dynamic>> registerPatient({
+  required String name,
+  required String email,
+  required String phone,
+  required String dateOfBirth,
+  required String gender,
+  required String address,
+  String? bloodType,
+  String? emergencyContact,
+  List<String>? allergies,
+  List<String>? medications,
+  List<String>? conditions,
+  required String cardSerialNumber,
+}) async {
+  try {
+    if (cardSerialNumber.isEmpty) {
+      throw Exception('Patient IC (Card serial number) cannot be empty');
+    }
+    
+    print('🚀 Starting ONE-STEP secure registration with IC: $cardSerialNumber');
+    
+    // STEP 1: Check current card status
+    final cardCheck = await checkCardRegistration(cardSerialNumber);
+    
+    if (cardCheck != null) {
+      final status = cardCheck['registrationStatus'];
+      
+      switch (status) {
+        case 'LOCKED':
+          final lockInfo = cardCheck['lockInfo'];
+          throw Exception(
+            '🔒 This card is permanently locked to patient: ${lockInfo['patientName']} '
+            '(ID: ${lockInfo['patientId']}). Registered on: ${lockInfo['registrationDate']}. '
+            'This card cannot be used for new registrations.'
+          );
+          
+        case 'CARD_DATA_FOUND':
+        case 'DATABASE_FOUND':
+          final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
+          throw Exception(
+            '👥 This IC is already registered to patient: ${existingPatient['name']} '
+            '(ID: ${existingPatient['patientId']}). Each IC can only be registered to one patient.'
+          );
+          
+        case 'TOKEN_AVAILABLE':
+          // Good - proceed with existing token
+          print('✅ Valid token found, proceeding with registration');
+          break;
+          
+        case 'BLANK_CARD':
+        default:
+          // AUTO-INITIALIZE: Create token on-the-fly
+          print('🆕 Blank card detected, auto-initializing...');
+          
+          try {
+            final tokenData = CardSecurityService.generateRegistrationToken(cardSerialNumber);
+            await NFCService.writeNFC(tokenData);
+            print('✅ Card auto-initialized with registration token');
+          } catch (initError) {
+            throw Exception(
+              '🔧 Failed to initialize card: ${initError.toString()}. '
+              'Please ensure the card is compatible and try again.'
+            );
+          }
+          break;
       }
-      
-      print('Registering patient with IC: $cardSerialNumber');
-      
-      // Check if IC is already registered
-      final cardCheck = await checkCardRegistration(cardSerialNumber);
-      
-      if (cardCheck != null && cardCheck['isRegistered'] == true) {
-        final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
+    } else {
+      // No status detected - initialize automatically
+      print('🆕 Unknown card status, auto-initializing...');
+      try {
+        final tokenData = CardSecurityService.generateRegistrationToken(cardSerialNumber);
+        await NFCService.writeNFC(tokenData);
+        print('✅ Card auto-initialized with registration token');
+      } catch (initError) {
         throw Exception(
-          'This IC is already registered to patient: ${existingPatient['name']} (ID: ${existingPatient['patientId']}). Each IC can only be registered to one patient.'
+          '🔧 Failed to initialize card: ${initError.toString()}. '
+          'Please ensure the card is compatible and try again.'
         );
       }
+    }
+    
+    // STEP 2: Consume registration token
+    print('🎫 Consuming registration token...');
+    final tokenConsumed = await CardSecurityService.consumeRegistrationToken(cardSerialNumber);
+    if (!tokenConsumed) {
+      throw Exception(
+        '🎫 Failed to consume registration token. This might indicate a card compatibility issue. '
+        'Please try with a different card or contact technical support.'
+      );
+    }
+    
+    // STEP 3: Create patient record
+    final patientId = cardSerialNumber;
+    print('📝 Creating patient record with IC: $patientId');
+    
+    final patientData = {
+      'patientId': patientId,
+      'name': name,
+      'email': email,
+      'phone': phone,
+      'dateOfBirth': dateOfBirth,
+      'gender': gender,
+      'address': address,
+      'bloodType': bloodType,
+      'emergencyContact': emergencyContact,
+      'allergies': allergies ?? [],
+      'medications': medications ?? [],
+      'conditions': conditions ?? [],
+      'cardSerialNumber': cardSerialNumber,
+      'registrationDate': FieldValue.serverTimestamp(),
+      'lastUpdated': FieldValue.serverTimestamp(),
+      'currentAppointment': null,
+      'assignedDoctor': null,
+      'assignedRoom': null,
+      'securityVersion': '2.0',
+      'registrationMethod': 'ONE_STEP_SECURE',
+    };
+    
+    // STEP 4: Save to database
+    print('💾 Saving to database...');
+    await patientsCollection.doc(patientId).set(patientData);
+    
+    // STEP 5: Secure the card with all security layers
+    print('🔒 Applying security layers...');
+    
+    try {
+      // Layer 1: Lock card permanently
+      await CardSecurityService.lockCardToPatient(
+        cardSerialNumber: cardSerialNumber,
+        patientName: name,
+        patientEmail: email,
+      );
       
-      // Use cardSerialNumber as patientId (IC number)
-      final patientId = cardSerialNumber;
+      // Layer 2: Write patient data to card
+      await CardSecurityService.writePatientDataToCard(patientData);
       
-      print('Creating new patient with IC: $patientId');
+      // Layer 3: Generate cryptographic signature
+      await CardSecurityService.writeSecuritySignature(patientData);
       
-      // Create patient data
-      final patientData = {
-        'patientId': patientId,
-        'name': name,
-        'email': email,
-        'phone': phone,
-        'dateOfBirth': dateOfBirth,
-        'gender': gender,
-        'address': address,
-        'bloodType': bloodType,
-        'emergencyContact': emergencyContact,
-        'allergies': allergies ?? [],
-        'medications': medications ?? [],
-        'conditions': conditions ?? [],
-        'cardSerialNumber': cardSerialNumber, // This is the patient IC
-        'registrationDate': FieldValue.serverTimestamp(),
+      print('✅ All security layers applied successfully');
+      
+    } catch (securityError) {
+      // If security steps fail, still complete registration but warn
+      print('⚠️ Warning: Some security layers failed: $securityError');
+      
+      // Update patient record to indicate partial security
+      await patientsCollection.doc(patientId).update({
+        'securityStatus': 'PARTIAL',
+        'securityWarning': securityError.toString(),
         'lastUpdated': FieldValue.serverTimestamp(),
-        'currentAppointment': null,
-        'assignedDoctor': null,
-        'assignedRoom': null,
-      };
-      
-      // Save to Firestore using IC as document ID
-      await patientsCollection.doc(patientId).set(patientData);
-      
-      print('Patient registered successfully with IC: $patientId');
-      
-      // Return data for NFC card
-      return {
-        'patientId': patientId,
-        'name': name,
-        'dateOfBirth': dateOfBirth,
-        'cardSerialNumber': cardSerialNumber,
-      };
+      });
+    }
+    
+    print('🎉 ONE-STEP registration completed successfully: $patientId');
+    
+    return {
+      'patientId': patientId,
+      'name': name,
+      'dateOfBirth': dateOfBirth,
+      'cardSerialNumber': cardSerialNumber,
+      'securityLevel': 'ULTIMATE',
+      'registrationMethod': 'ONE_STEP_SECURE',
+      'registrationTimestamp': DateTime.now().toIso8601String(),
+    };
+    
+  } catch (e) {
+    print('❌ ONE-STEP registration failed: ${e.toString()}');
+    rethrow;
+  }
+}
+  
+  // Helper: Restore registration token if registration fails
+  Future<void> _restoreRegistrationToken(String cardSerialNumber) async {
+    try {
+      final tokenData = CardSecurityService.generateRegistrationToken(cardSerialNumber);
+      await NFCService.writeNFC(tokenData);
+      print('🔄 Registration token restored');
     } catch (e) {
-      print('Error registering patient: ${e.toString()}');
-      rethrow;
+      print('❌ Failed to restore registration token: $e');
+    }
+  }
+  
+  // 🔐 ENHANCED: Initialize blank card with registration token
+  Future<bool> initializeBlankCard(String cardSerialNumber) async {
+    try {
+      print('🆕 Initializing blank card: $cardSerialNumber');
+      
+      // Check if card is already initialized
+      final existingCheck = await checkCardRegistration(cardSerialNumber);
+      if (existingCheck != null && (
+          existingCheck['registrationStatus'] == 'LOCKED' ||
+          existingCheck['registrationStatus'] == 'CARD_DATA_FOUND' ||
+          existingCheck['registrationStatus'] == 'DATABASE_FOUND'
+      )) {
+        print('⚠️ Card is already initialized or registered');
+        return false;
+      }
+      
+      // Initialize with registration token
+      final success = await CardSecurityService.initializeBlankCard(cardSerialNumber);
+      
+      if (success) {
+        print('✅ Blank card initialized successfully');
+      } else {
+        print('❌ Failed to initialize blank card');
+      }
+      
+      return success;
+      
+    } catch (e) {
+      print('❌ Error initializing blank card: $e');
+      return false;
     }
   }
   

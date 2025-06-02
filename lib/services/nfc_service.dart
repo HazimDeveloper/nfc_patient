@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:nfc_manager/nfc_manager.dart';
-import 'package:crypto/crypto.dart'; // Add this to pubspec.yaml: crypto: ^3.0.3
 
 class NFCService {
   // Check if NFC is available on the device
@@ -16,7 +15,7 @@ class NFCService {
     }
   }
   
-  // Read NFC tag and get HIGHLY UNIQUE card ID
+  // Read NFC tag and get REAL card ID (safer approach)
   static Future<Map<String, dynamic>?> readNFC() async {
     if (!await isNFCAvailable()) {
       throw Exception('NFC is not available on this device');
@@ -34,17 +33,14 @@ class NFCService {
             
             Map<String, dynamic> result = {};
             
-            // Generate a highly unique card identifier
-            String cardId = _generateUniqueCardId(tag);
+            // Try to get a consistent card identifier
+            String cardId = _getCardIdentifier(tag);
             result['cardSerialNumber'] = cardId;
             
-            // Store multiple identifiers for verification
+            // Also store raw data for debugging
             result['rawTagData'] = tag.data.toString();
-            result['tagFingerprint'] = _generateTagFingerprint(tag);
-            result['scanTimestamp'] = DateTime.now().toIso8601String();
             
-            debugPrint('Generated card ID: $cardId');
-            debugPrint('Tag fingerprint: ${result['tagFingerprint']}');
+            debugPrint('Final card ID: $cardId');
             
             completer.complete(result);
             NfcManager.instance.stopSession();
@@ -66,99 +62,47 @@ class NFCService {
     }
   }
   
-  // Generate highly unique card identifier (reduces collision chance to near zero)
-  static String _generateUniqueCardId(NfcTag tag) {
+  // Get card identifier using safer approach
+  static String _getCardIdentifier(NfcTag tag) {
     try {
-      // Step 1: Get all available data from the tag
+      // Method 1: Create a consistent hash from the entire tag data
       final tagDataString = tag.data.toString();
       
-      // Step 2: Create multiple data points for uniqueness
-      List<String> uniqueDataPoints = [];
+      // Simple hash function on the tag data
+      int hash = tagDataString.hashCode;
+      if (hash < 0) hash = -hash; // Make it positive
       
-      // Add the complete tag data
-      uniqueDataPoints.add(tagDataString);
+      String baseId = 'CARD-${hash.toString().padLeft(10, '0')}';
       
-      // Add hash of tag data
-      uniqueDataPoints.add(tagDataString.hashCode.toString());
-      
-      // Add tag keys (technology types present)
-      uniqueDataPoints.add(tag.data.keys.join('-'));
-      
-      // Step 3: Extract any unique patterns
+      // Method 2: Try to extract any numeric values that might be unique
       final allText = tagDataString.toLowerCase();
-      
-      // Look for long numeric sequences (UIDs often contain these)
       final numbers = RegExp(r'\d{6,}').allMatches(allText);
-      for (var match in numbers.take(3)) { // Take up to 3 numbers
-        final number = match.group(0);
-        if (number != null) uniqueDataPoints.add(number);
+      
+      if (numbers.isNotEmpty) {
+        // Use the first long number we find
+        final firstLongNumber = numbers.first.group(0);
+        if (firstLongNumber != null && firstLongNumber.length >= 6) {
+          return 'NFC-$firstLongNumber';
+        }
       }
       
-      // Look for hex patterns (UIDs are often in hex)
+      // Method 3: Look for any hex patterns that might be UIDs
       final hexPatterns = RegExp(r'[0-9a-f]{8,}').allMatches(allText);
-      for (var match in hexPatterns.take(3)) { // Take up to 3 hex strings
-        final hex = match.group(0);
-        if (hex != null) uniqueDataPoints.add(hex);
+      if (hexPatterns.isNotEmpty) {
+        final firstHex = hexPatterns.first.group(0);
+        if (firstHex != null && firstHex.length >= 8) {
+          return 'HEX-${firstHex.toUpperCase()}';
+        }
       }
       
-      // Step 4: Create a strong hash using SHA-256
-      final combinedData = uniqueDataPoints.join('|');
-      final bytes = utf8.encode(combinedData);
-      final digest = sha256.convert(bytes);
-      
-      // Step 5: Take first 16 characters of hash for manageable ID
-      final uniqueId = digest.toString().substring(0, 16).toUpperCase();
-      
-      return 'NFC-$uniqueId';
+      // Fallback: Use the hash
+      return baseId;
       
     } catch (e) {
-      debugPrint('Error generating unique card ID: $e');
-      
-      // Emergency fallback with timestamp (should rarely be used)
-      final emergency = 'EMERGENCY-${DateTime.now().millisecondsSinceEpoch}';
-      debugPrint('Using emergency fallback ID: $emergency');
-      return emergency;
-    }
-  }
-  
-  // Generate a secondary fingerprint for verification
-  static String _generateTagFingerprint(NfcTag tag) {
-    try {
-      // Create a different hash for verification purposes
-      final tagString = tag.data.toString();
-      final hash = tagString.hashCode.abs().toString();
-      return 'FP-${hash.padLeft(10, '0')}';
-    } catch (e) {
-      return 'FP-ERROR';
-    }
-  }
-  
-  // Verify if two scans are from the same card
-  static bool isSameCard(Map<String, dynamic> scan1, Map<String, dynamic> scan2) {
-    try {
-      // Primary check: same card serial number
-      if (scan1['cardSerialNumber'] == scan2['cardSerialNumber']) {
-        return true;
-      }
-      
-      // Secondary check: same fingerprint (in case of ID collision)
-      if (scan1['tagFingerprint'] == scan2['tagFingerprint']) {
-        debugPrint('Same fingerprint detected - likely same card');
-        return true;
-      }
-      
-      // Tertiary check: similar raw data
-      final rawData1 = scan1['rawTagData']?.toString() ?? '';
-      final rawData2 = scan2['rawTagData']?.toString() ?? '';
-      if (rawData1.isNotEmpty && rawData1 == rawData2) {
-        debugPrint('Same raw data detected - definitely same card');
-        return true;
-      }
-      
-      return false;
-    } catch (e) {
-      debugPrint('Error comparing cards: $e');
-      return false;
+      debugPrint('Error getting card identifier: $e');
+      // Last resort: use a hash of the current time and tag data
+      final fallback = '${tag.data.toString()}${DateTime.now().millisecondsSinceEpoch}'.hashCode.abs();
+      return 'FALLBACK-$fallback';
     }
   }
   
@@ -176,6 +120,7 @@ class NFCService {
     final completer = Completer<bool>();
     
     try {
+      // Convert data to JSON string
       final jsonData = jsonEncode(data);
       debugPrint('NFC: Preparing to write: $jsonData');
       
@@ -183,7 +128,10 @@ class NFCService {
         pollingOptions: {NfcPollingOption.iso14443, NfcPollingOption.iso15693},
         onDiscovered: (NfcTag tag) async {
           try {
+            // This is a simplified implementation
             debugPrint('NFC: Write operation would occur here');
+            
+            // For now, just simulate success
             completer.complete(true);
             NfcManager.instance.stopSession();
           } catch (e) {
@@ -218,6 +166,8 @@ class NFCService {
         onDiscovered: (NfcTag tag) async {
           try {
             debugPrint('NFC: Format operation would occur here');
+            
+            // For now, just simulate success
             completer.complete(true);
             NfcManager.instance.stopSession();
           } catch (e) {

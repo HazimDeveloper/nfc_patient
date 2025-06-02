@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:nfc_patient_registration/services/nfc_service.dart';
 import 'package:nfc_patient_registration/services/database_service.dart';
+import 'package:nfc_patient_registration/services/card_security_sevice.dart';
 import 'package:nfc_patient_registration/screens/nurse/patient_registration.dart';
 import 'package:nfc_patient_registration/screens/nurse/assign_doctor.dart';
 import 'package:nfc_patient_registration/screens/nurse/patient_detail_screen.dart';
@@ -19,6 +20,9 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
   String? _cardSerialNumber;
   String? _detailedErrorMessage;
   Map<String, dynamic>? _existingPatientData;
+  Map<String, dynamic>? _lockInfo;
+  Map<String, dynamic>? _cardInfo;
+  String? _registrationStatus;
   
   late AnimationController _animationController;
   late Animation<double> _animation;
@@ -48,7 +52,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
     super.dispose();
   }
 
-  // Start NFC card reading
+  // Start NFC card reading with enhanced security
   Future<void> _startNFCScanning() async {
     try {
       // Check if NFC is available
@@ -71,6 +75,9 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
         _cardSerialNumber = null;
         _detailedErrorMessage = null;
         _existingPatientData = null;
+        _lockInfo = null;
+        _cardInfo = null;
+        _registrationStatus = null;
         _statusMessage = 'Place NFC card on the back of your device';
       });
       
@@ -89,7 +96,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
         }
         
         // Debug output
-        debugPrint('NFC Read Result: $result');
+        debugPrint('🔍 NFC Read Result: $result');
         
         // Extract serial number with priority order
         String? serialNumber;
@@ -118,13 +125,18 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
           serialNumber = 'NFC-${DateTime.now().millisecondsSinceEpoch}';
         }
         
-        debugPrint('Final card serial number: $serialNumber');
+        debugPrint('🆔 Final card serial number: $serialNumber');
         
-        // Check if this card is already registered
+        // Store card info for later use
+        setState(() {
+          _cardInfo = result;
+        });
+        
+        // Check card registration with enhanced security
         await _checkCardRegistration(serialNumber);
         
       } catch (e) {
-        debugPrint('Error during NFC reading process: $e');
+        debugPrint('❌ Error during NFC reading process: $e');
         setState(() {
           _success = false;
           _error = true;
@@ -134,7 +146,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
         });
       }
     } catch (e) {
-      debugPrint('Outer exception in _startNFCScanning: $e');
+      debugPrint('❌ Outer exception in _startNFCScanning: $e');
       setState(() {
         _success = false;
         _error = true;
@@ -152,45 +164,123 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
     }
   }
   
-  // Check if card is already registered
+  // 🔐 Enhanced card registration check with full security validation
   Future<void> _checkCardRegistration(String serialNumber) async {
     try {
       final databaseService = DatabaseService();
       final cardCheck = await databaseService.checkCardRegistration(serialNumber);
       
-      if (cardCheck != null && cardCheck['isRegistered'] == true) {
-        // Card is already registered - show patient found
-        final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
+      if (cardCheck != null) {
+        final status = cardCheck['registrationStatus'];
+        final isRegistered = cardCheck['isRegistered'] == true;
+        
+        debugPrint('🔍 Card check result: $status');
         
         setState(() {
           _cardSerialNumber = serialNumber;
-          _existingPatientData = existingPatient;
-          _success = true; // Changed to true - patient found successfully
-          _error = false;  // Not an error - just already registered
-          _isScanning = false;
-          _statusMessage = 'Patient found';
-          _detailedErrorMessage = null;
+          _registrationStatus = status;
         });
+        
+        switch (status) {
+          case 'LOCKED':
+            // Card is permanently locked
+            final lockInfo = cardCheck['lockInfo'];
+            setState(() {
+              _existingPatientData = cardCheck['patientData'];
+              _lockInfo = lockInfo;
+              _success = false;
+              _error = true;
+              _isScanning = false;
+              _statusMessage = 'Card is permanently locked';
+              _detailedErrorMessage = '🔒 This card is permanently locked to ${lockInfo['patientName']} since ${lockInfo['registrationDate']}';
+            });
+            break;
+            
+          case 'CARD_DATA_FOUND':
+            // Patient data found on card and verified
+            final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
+            final bindingValid = cardCheck['bindingValid'] ?? false;
+            setState(() {
+              _existingPatientData = existingPatient;
+              _success = true;
+              _error = false;
+              _isScanning = false;
+              _statusMessage = 'Registered patient found';
+              _detailedErrorMessage = bindingValid 
+                  ? '✅ Patient data verified with cryptographic security'
+                  : '⚠️ Patient data found but security binding needs verification';
+            });
+            break;
+            
+          case 'DATABASE_FOUND':
+            // Patient found in database but card may not be properly secured
+            final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
+            setState(() {
+              _existingPatientData = existingPatient;
+              _success = true;
+              _error = false;
+              _isScanning = false;
+              _statusMessage = 'Patient found in database';
+              _detailedErrorMessage = '⚠️ Patient found in database but card security may need updating';
+            });
+            break;
+            
+          case 'TOKEN_AVAILABLE':
+            // Card has valid registration token - available for registration
+            final tokenInfo = cardCheck['tokenInfo'];
+            setState(() {
+              _existingPatientData = null;
+              _success = true;
+              _error = false;
+              _isScanning = false;
+              _statusMessage = 'Card ready for registration';
+              _detailedErrorMessage = '🎫 Valid registration token found (Generated: ${tokenInfo['generatedAt']})';
+            });
+            break;
+            
+          case 'BLANK_CARD':
+            // Card needs initialization
+            setState(() {
+              _existingPatientData = null;
+              _success = false;
+              _error = true;
+              _isScanning = false;
+              _statusMessage = 'Card needs initialization';
+              _detailedErrorMessage = '🆕 This card needs to be initialized with a registration token first';
+            });
+            break;
+            
+          default:
+            // Unknown status
+            setState(() {
+              _existingPatientData = null;
+              _success = false;
+              _error = true;
+              _isScanning = false;
+              _statusMessage = 'Unknown card status';
+              _detailedErrorMessage = cardCheck['message'] ?? 'Unable to determine card status';
+            });
+        }
       } else {
-        // Card is available for registration
+        // Null response - error occurred
         setState(() {
           _cardSerialNumber = serialNumber;
-          _existingPatientData = null;
-          _success = true;
-          _error = false;
+          _success = false;
+          _error = true;
           _isScanning = false;
-          _statusMessage = 'Card available for registration';
+          _statusMessage = 'Card validation failed';
+          _detailedErrorMessage = 'Unable to validate card status';
         });
       }
     } catch (e) {
-      debugPrint('Error checking card registration: $e');
+      debugPrint('❌ Error checking card registration: $e');
       setState(() {
         _cardSerialNumber = serialNumber;
         _success = false;
         _error = true;
         _isScanning = false;
         _statusMessage = 'Error validating card';
-        _detailedErrorMessage = 'Could not check if card is already registered: ${e.toString()}';
+        _detailedErrorMessage = 'Could not check card status: ${e.toString()}';
       });
     }
   }
@@ -231,7 +321,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
       return;
     }
     
-    debugPrint('Proceeding to registration with serial: $_cardSerialNumber');
+    debugPrint('🚀 Proceeding to registration with serial: $_cardSerialNumber');
     
     Navigator.push(
       context,
@@ -243,87 +333,85 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
     );
   }
   
-  // View existing patient details
-  void _viewExistingPatient() {
-    if (_existingPatientData != null) {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.person, color: Theme.of(context).primaryColor),
-              SizedBox(width: 8),
-              Text('Registered Patient'),
-            ],
+  // Initialize blank card
+  Future<void> _initializeBlankCard() async {
+    if (_cardSerialNumber == null) return;
+    
+    setState(() {
+      _isScanning = true;
+      _statusMessage = 'Initializing card...';
+      _error = false;
+      _success = false;
+    });
+    
+    try {
+      final databaseService = DatabaseService();
+      final success = await databaseService.initializeBlankCard(_cardSerialNumber!);
+      
+      if (success) {
+        setState(() {
+          _success = true;
+          _error = false;
+          _isScanning = false;
+          _statusMessage = 'Card initialized successfully';
+          _detailedErrorMessage = '✅ Registration token written to card';
+          _registrationStatus = 'TOKEN_AVAILABLE';
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Card initialized successfully! Ready for patient registration.'),
+            backgroundColor: Colors.green,
           ),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'This card is already registered to:',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.red[700],
-                  ),
-                ),
-                SizedBox(height: 16),
-                _buildPatientInfoRow('Name', _existingPatientData!['name'] ?? 'Unknown'),
-                _buildPatientInfoRow('Patient ID', _existingPatientData!['patientId'] ?? 'Unknown'),
-                _buildPatientInfoRow('Date of Birth', _existingPatientData!['dateOfBirth'] ?? 'Unknown'),
-                _buildPatientInfoRow('Phone', _existingPatientData!['phone'] ?? 'Unknown'),
-                _buildPatientInfoRow('Email', _existingPatientData!['email'] ?? 'Unknown'),
-                
-                SizedBox(height: 16),
-                Container(
-                  padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.warning, color: Colors.orange, size: 20),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Each NFC card can only be registered to one patient. Please use a different card for new registrations.',
-                          style: TextStyle(
-                            color: Colors.orange[800],
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+        );
+      } else {
+        setState(() {
+          _success = false;
+          _error = true;
+          _isScanning = false;
+          _statusMessage = 'Failed to initialize card';
+          _detailedErrorMessage = '❌ Could not write registration token to card';
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to initialize card. Please try again.'),
+            backgroundColor: Colors.red,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Close'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                setState(() {
-                  _cardSerialNumber = null;
-                  _existingPatientData = null;
-                  _success = false;
-                  _error = false;
-                  _statusMessage = 'Tap "Scan Card" to begin';
-                });
-              },
-              child: Text('Scan Different Card'),
-            ),
-          ],
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _success = false;
+        _error = true;
+        _isScanning = false;
+        _statusMessage = 'Error initializing card';
+        _detailedErrorMessage = 'Error: ${e.toString()}';
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error initializing card: ${e.toString()}'),
+          backgroundColor: Colors.red,
         ),
       );
     }
+  }
+
+  // Reset scan state
+  void _resetScan() {
+    setState(() {
+      _isScanning = false;
+      _error = false;
+      _success = false;
+      _cardSerialNumber = null;
+      _detailedErrorMessage = null;
+      _existingPatientData = null;
+      _lockInfo = null;
+      _cardInfo = null;
+      _registrationStatus = null;
+      _statusMessage = 'Tap "Scan Card" to begin';
+    });
   }
 
   Widget _buildPatientInfoRow(String label, String value) {
@@ -361,6 +449,13 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
       appBar: AppBar(
         title: Text('NFC Card Registration', style: TextStyle(color: Colors.white)),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: Icon(Icons.refresh),
+            onPressed: _resetScan,
+            tooltip: 'Reset',
+          ),
+        ],
       ),
       body: Center(
         child: Padding(
@@ -386,7 +481,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                     ),
                     SizedBox(height: 8),
                     Text(
-                      'Scan an NFC card to register a new patient or view existing patient information. Each card can only be registered to one patient.',
+                      '🔐 Enhanced Security System\n\nScan an NFC card to register a new patient or view existing patient information. Each card is cryptographically secured and can only be registered to one patient.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 16,
@@ -425,9 +520,9 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
-                    Icons.check_circle,
+                    _registrationStatus == 'LOCKED' ? Icons.lock : Icons.check_circle,
                     size: 80,
-                    color: Colors.green,
+                    color: _registrationStatus == 'LOCKED' ? Colors.orange : Colors.green,
                   ),
                 )
               else if (_error)
@@ -439,9 +534,11 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
-                    _existingPatientData != null ? Icons.person : Icons.error,
+                    _registrationStatus == 'LOCKED' ? Icons.lock : 
+                    _registrationStatus == 'BLANK_CARD' ? Icons.credit_card : Icons.error,
                     size: 80,
-                    color: Colors.red,
+                    color: _registrationStatus == 'LOCKED' ? Colors.red : 
+                           _registrationStatus == 'BLANK_CARD' ? Colors.orange : Colors.red,
                   ),
                 )
               else
@@ -468,7 +565,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: _error
-                      ? Colors.red
+                      ? (_registrationStatus == 'LOCKED' ? Colors.red : Colors.red)
                       : _success
                           ? Colors.green
                           : Colors.black,
@@ -477,20 +574,28 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
               ),
               
               // Detailed error message if available
-              if (_detailedErrorMessage != null && _error) ...[
+              if (_detailedErrorMessage != null) ...[
                 SizedBox(height: 8),
                 Container(
                   padding: EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
+                    color: (_error ? 
+                           (_registrationStatus == 'LOCKED' ? Colors.red : Colors.red) : 
+                           Colors.blue).withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.red.withOpacity(0.3)),
+                    border: Border.all(
+                      color: (_error ? 
+                             (_registrationStatus == 'LOCKED' ? Colors.red : Colors.red) : 
+                             Colors.blue).withOpacity(0.3)
+                    ),
                   ),
                   child: Text(
                     _detailedErrorMessage!,
                     style: TextStyle(
                       fontSize: 14,
-                      color: Colors.red[700],
+                      color: _error ? 
+                             (_registrationStatus == 'LOCKED' ? Colors.red[700] : Colors.red[700]) : 
+                             Colors.blue[700],
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -500,13 +605,19 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
               SizedBox(height: 16),
               
               // Display card info when successfully scanned
-              if (_cardSerialNumber != null && _success) ...[
+              if (_cardSerialNumber != null && (_success || _error)) ...[
                 Container(
                   padding: EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: (_existingPatientData != null ? Colors.blue : Colors.green).withOpacity(0.1),
+                    color: (_registrationStatus == 'LOCKED' ? Colors.red :
+                           _registrationStatus == 'TOKEN_AVAILABLE' ? Colors.green :
+                           _registrationStatus == 'BLANK_CARD' ? Colors.orange :
+                           Colors.blue).withOpacity(0.1),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: (_existingPatientData != null ? Colors.blue : Colors.green).withOpacity(0.3)),
+                    border: Border.all(color: (_registrationStatus == 'LOCKED' ? Colors.red :
+                                               _registrationStatus == 'TOKEN_AVAILABLE' ? Colors.green :
+                                               _registrationStatus == 'BLANK_CARD' ? Colors.orange :
+                                               Colors.blue).withOpacity(0.3)),
                   ),
                   child: Column(
                     children: [
@@ -514,17 +625,26 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
+                            _registrationStatus == 'LOCKED' ? Icons.lock :
+                            _registrationStatus == 'TOKEN_AVAILABLE' ? Icons.check_circle :
+                            _registrationStatus == 'BLANK_CARD' ? Icons.credit_card :
                             _existingPatientData != null ? Icons.person : Icons.check_circle,
-                            color: _existingPatientData != null ? Colors.blue : Colors.green,
+                            color: _registrationStatus == 'LOCKED' ? Colors.red :
+                                   _registrationStatus == 'TOKEN_AVAILABLE' ? Colors.green :
+                                   _registrationStatus == 'BLANK_CARD' ? Colors.orange :
+                                   Colors.blue,
                             size: 20,
                           ),
                           SizedBox(width: 8),
                           Text(
-                            _existingPatientData != null ? 'Patient Found' : 'Card Available for Registration',
+                            _getCardStatusTitle(),
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
-                              color: (_existingPatientData != null ? Colors.blue : Colors.green)[800],
+                              color: (_registrationStatus == 'LOCKED' ? Colors.red :
+                                     _registrationStatus == 'TOKEN_AVAILABLE' ? Colors.green :
+                                     _registrationStatus == 'BLANK_CARD' ? Colors.orange :
+                                     Colors.blue)[800],
                             ),
                           ),
                         ],
@@ -561,6 +681,25 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                               fontSize: 14,
                             ),
                             textAlign: TextAlign.center,
+                          ),
+                        ],
+                        if (_lockInfo != null) ...[
+                          SizedBox(height: 8),
+                          Container(
+                            padding: EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              '🔒 Permanently Locked: ${_lockInfo!['registrationDate']}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.red[800],
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
                           ),
                         ],
                       ] else ...[
@@ -604,7 +743,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
               else if (_success && _cardSerialNumber != null)
                 Column(
                   children: [
-                    if (_existingPatientData != null) ...[
+                    if (_existingPatientData != null && _registrationStatus != 'LOCKED') ...[
                       // Patient already registered - show patient actions
                       SizedBox(
                         width: double.infinity,
@@ -687,8 +826,8 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                             ],
                           ),
                         ),
-                    ] else ...[
-                      // New card - proceed to registration
+                    ] else if (_registrationStatus == 'TOKEN_AVAILABLE') ...[
+                      // New card with token - proceed to registration
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
@@ -705,6 +844,40 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                           ),
                         ),
                       ),
+                    ] else if (_registrationStatus == 'LOCKED') ...[
+                      // Locked card - show warning message
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.red),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(Icons.security, color: Colors.red, size: 48),
+                            SizedBox(height: 8),
+                            Text(
+                              '🔒 CARD PERMANENTLY LOCKED',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red[800],
+                                fontSize: 16,
+                              ),
+                            ),
+                            SizedBox(height: 8),
+                            Text(
+                              'This card cannot be used for new registrations due to security restrictions.',
+                              style: TextStyle(
+                                color: Colors.red[700],
+                                fontSize: 14,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                     
                     SizedBox(height: 12),
@@ -713,15 +886,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            _cardSerialNumber = null;
-                            _existingPatientData = null;
-                            _success = false;
-                            _statusMessage = 'Tap "Scan Card" to begin';
-                          });
-                          _startNFCScanning();
-                        },
+                        onPressed: _resetScan,
                         icon: Icon(Icons.refresh),
                         label: Text('Scan Different Card'),
                         style: OutlinedButton.styleFrom(
@@ -734,15 +899,15 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                     ),
                   ],
                 )
-              else if (_error && _existingPatientData != null)
+              else if (_error && _registrationStatus == 'BLANK_CARD')
                 Column(
                   children: [
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        onPressed: _viewExistingPatient,
-                        icon: Icon(Icons.visibility),
-                        label: Text('View Registered Patient'),
+                        onPressed: _initializeBlankCard,
+                        icon: Icon(Icons.settings),
+                        label: Text('Initialize This Card'),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.orange,
                           foregroundColor: Colors.white,
@@ -757,17 +922,9 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            _cardSerialNumber = null;
-                            _existingPatientData = null;
-                            _error = false;
-                            _statusMessage = 'Tap "Scan Card" to begin';
-                          });
-                          _startNFCScanning();
-                        },
+                        onPressed: _resetScan,
                         icon: Icon(Icons.contactless),
-                        label: Text('Try Different Card'),
+                        label: Text('Scan Different Card'),
                         style: OutlinedButton.styleFrom(
                           padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                           shape: RoundedRectangleBorder(
@@ -811,7 +968,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                           Icon(Icons.help_outline, color: Colors.grey[600], size: 20),
                           SizedBox(width: 8),
                           Text(
-                            'Need Help?',
+                            'Security Features',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               color: Colors.grey[800],
@@ -821,11 +978,11 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                       ),
                       SizedBox(height: 8),
                       Text(
-                        '• Place the NFC card flat against the back of your device\n'
-                        '• Keep the card in contact until scanning completes\n'
-                        '• If card is already registered, you\'ll see patient details\n'
-                        '• New cards can be used to register new patients\n'
-                        '• Ensure NFC is enabled in your device settings',
+                        '🔐 Cryptographic locks prevent card reuse\n'
+                        '🎫 Registration tokens control card initialization\n'
+                        '📋 Patient data embedded on card for offline access\n'
+                        '✅ Multiple verification layers ensure security\n'
+                        '🔄 Real-time validation with database sync',
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey[700],
@@ -840,5 +997,21 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
         ),
       ),
     );
+  }
+
+  String _getCardStatusTitle() {
+    switch (_registrationStatus) {
+      case 'LOCKED':
+        return 'Card Permanently Locked';
+      case 'TOKEN_AVAILABLE':
+        return 'Ready for Registration';
+      case 'CARD_DATA_FOUND':
+      case 'DATABASE_FOUND':
+        return 'Registered Patient';
+      case 'BLANK_CARD':
+        return 'Card Needs Initialization';
+      default:
+        return 'Card Status';
+    }
   }
 }
