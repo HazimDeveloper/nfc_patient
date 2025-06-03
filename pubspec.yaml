@@ -29,11 +29,13 @@ environment:
 # versions available, run `flutter pub outdated`.
 dependencies:
   cloud_firestore: ^5.6.5
+  crypto: ^3.0.3
   cupertino_icons: ^1.0.8
   firebase_auth: ^5.5.1
   firebase_core: ^3.12.1
   flutter:
     sdk: flutter
+  flutter_nfc_kit: ^3.6.0
   flutter_secure_storage: ^9.2.4
   flutter_svg: ^2.0.17
   get_it: ^8.0.3
@@ -45,15 +47,8 @@ dependencies:
   provider: ^6.1.2
   qr_flutter: ^4.1.0
   shared_preferences: ^2.5.2
-  crypto: ^3.0.3
 
 dev_dependencies:
-
-  # The "flutter_lints" package below contains a set of recommended lints to
-  # encourage good coding practices. The lint set provided by the package is
-  # activated in the `analysis_options.yaml` file located at the root of your
-  # package. See that file for information about deactivating specific lint
-  # rules and activating additional ones.
   flutter_lints: ^5.0.0
   flutter_test:
     sdk: flutter
