@@ -91,6 +91,12 @@ class AuthService with ChangeNotifier {
         return 'patient';
       }
       
+      // Check if user is a doctor by email mapping
+      final doctorId = _mapEmailToDoctorId(currentUser!.email!);
+      if (doctorId != null) {
+        return 'doctor';
+      }
+      
       // Check in users collection for other roles
       final doc = await _firestore.collection('users').doc(currentUser!.uid).get();
       
@@ -105,7 +111,21 @@ class AuthService with ChangeNotifier {
     }
   }
   
-  // Get current user ID - for patients, use their IC number
+  // Map email to doctor ID - this should match your doctor system
+  String? _mapEmailToDoctorId(String email) {
+    switch (email) {
+      case 'doctor1@hospital.com':
+        return 'doctor1';
+      case 'doctor2@hospital.com':
+        return 'doctor2';
+      case 'doctor3@hospital.com':
+        return 'doctor3';
+      default:
+        return null;
+    }
+  }
+  
+  // Get current user ID - for patients, use their IC number; for doctors, use mapped ID
   Future<String?> getCurrentUserId() async {
     if (currentUser == null) return null;
     
@@ -116,6 +136,9 @@ class AuthService with ChangeNotifier {
         // For patients, get their IC number (patientId) from the database
         final patientData = await _databaseService.getPatientByEmail(currentUser!.email!);
         return patientData?['patientId']; // This is their IC number
+      } else if (role == 'doctor') {
+        // For doctors, use mapped doctor ID
+        return _mapEmailToDoctorId(currentUser!.email!);
       } else {
         // For other roles, use Firebase Auth UID
         return currentUser!.uid;
@@ -123,6 +146,22 @@ class AuthService with ChangeNotifier {
     } catch (e) {
       print('Error getting current user ID: ${e.toString()}');
       return currentUser!.uid; // Fallback to Auth UID
+    }
+  }
+  
+  // Get current doctor ID (specifically for doctors)
+  Future<String?> getCurrentDoctorId() async {
+    if (currentUser == null) return null;
+    
+    try {
+      final role = await getUserRole();
+      if (role == 'doctor') {
+        return _mapEmailToDoctorId(currentUser!.email!);
+      }
+      return null;
+    } catch (e) {
+      print('Error getting doctor ID: ${e.toString()}');
+      return null;
     }
   }
   
@@ -147,6 +186,16 @@ class AuthService with ChangeNotifier {
           await _firestore.collection('patients').doc(patientData['patientId']).update({
             'name': name,
             'lastUpdated': FieldValue.serverTimestamp(),
+          });
+        }
+      } else if (role == 'doctor') {
+        // For doctors, update in the doctors collection using mapped ID
+        final doctorId = _mapEmailToDoctorId(currentUser!.email!);
+        if (doctorId != null) {
+          await _firestore.collection('doctors').doc(doctorId).update({
+            'name': name,
+            if (photoUrl != null) 'photoUrl': photoUrl,
+            'updatedAt': FieldValue.serverTimestamp(),
           });
         }
       } else {
@@ -177,12 +226,111 @@ class AuthService with ChangeNotifier {
     await _auth.sendPasswordResetEmail(email: email);
   }
   
-  // Initialize default doctors (call this once during app setup)
+  // Initialize default doctors and create their auth accounts
   Future<void> initializeDefaultData() async {
     try {
       await _databaseService.initializeDefaultDoctors();
+      
+      // Create default doctor accounts if they don't exist
+      await _createDefaultDoctorAccounts();
     } catch (e) {
       print('Error initializing default data: ${e.toString()}');
+    }
+  }
+  
+  // Create default doctor accounts for testing
+  Future<void> _createDefaultDoctorAccounts() async {
+    final defaultDoctors = [
+      {
+        'email': 'doctor1@hospital.com',
+        'password': 'doctor123',
+        'name': 'Dr. Ahmad Rahman',
+        'role': 'doctor',
+      },
+      {
+        'email': 'doctor2@hospital.com',
+        'password': 'doctor123',
+        'name': 'Dr. Siti Aminah',
+        'role': 'doctor',
+      },
+      {
+        'email': 'doctor3@hospital.com',
+        'password': 'doctor123',
+        'name': 'Dr. Kumar Raj',
+        'role': 'doctor',
+      },
+    ];
+    
+    for (final doctorInfo in defaultDoctors) {
+      try {
+        // Check if doctor account already exists
+        final existingUser = await _checkUserExists(doctorInfo['email']!);
+        
+        if (!existingUser) {
+          // Create the doctor account
+          await _createDoctorAccount(
+            doctorInfo['email']!,
+            doctorInfo['password']!,
+            doctorInfo['name']!,
+          );
+          print('Created default doctor account: ${doctorInfo['email']}');
+        }
+      } catch (e) {
+        print('Error creating doctor account ${doctorInfo['email']}: $e');
+        // Continue with next doctor even if one fails
+      }
+    }
+  }
+  
+  // Check if user exists
+  Future<bool> _checkUserExists(String email) async {
+    try {
+      final methods = await _auth.fetchSignInMethodsForEmail(email);
+      return methods.isNotEmpty;
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  // Create a doctor account
+  Future<void> _createDoctorAccount(String email, String password, String name) async {
+    try {
+      final userCredential = await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      
+      if (userCredential.user != null) {
+        // Create user document
+        await _firestore.collection('users').doc(userCredential.user!.uid).set({
+          'email': email,
+          'name': name,
+          'role': 'doctor',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        
+        // Update display name
+        await userCredential.user!.updateDisplayName(name);
+        
+        print('Successfully created doctor account: $email');
+      }
+    } catch (e) {
+      print('Error creating doctor account: $e');
+      rethrow;
+    }
+  }
+  
+  // Get doctor information for UI display
+  Future<Map<String, dynamic>?> getCurrentDoctorInfo() async {
+    try {
+      final doctorId = await getCurrentDoctorId();
+      if (doctorId != null) {
+        return await _databaseService.getDoctorById(doctorId);
+      }
+      return null;
+    } catch (e) {
+      print('Error getting doctor info: ${e.toString()}');
+      return null;
     }
   }
 }

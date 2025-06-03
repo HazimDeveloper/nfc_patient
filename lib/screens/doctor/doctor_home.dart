@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:nfc_patient_registration/services/auth_service.dart';
 import 'package:nfc_patient_registration/services/database_service.dart';
 import 'package:nfc_patient_registration/screens/doctor/prescription_form.dart';
-import 'package:nfc_patient_registration/screens/patient/nfc_scan_screen.dart';
+import 'package:nfc_patient_registration/screens/doctor/doctor_nfc_scanner.dart';
 
 class DoctorHome extends StatefulWidget {
   @override
@@ -17,6 +17,7 @@ class _DoctorHomeState extends State<DoctorHome> {
   bool _isLoading = true;
   String? _error;
   String? _currentDoctorId;
+  Map<String, dynamic>? _doctorInfo;
 
   @override
   void initState() {
@@ -28,13 +29,24 @@ class _DoctorHomeState extends State<DoctorHome> {
   Future<void> _initializeDoctor() async {
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
-      _currentDoctorId = authService.currentUser?.uid;
+      final userEmail = authService.currentUser?.email;
       
-      if (_currentDoctorId != null) {
-        await _loadPatients();
+      if (userEmail != null) {
+        // Map email to doctor ID (you should store this mapping in your auth system)
+        _currentDoctorId = _mapEmailToDoctorId(userEmail);
+        _doctorInfo = await _databaseService.getDoctorById(_currentDoctorId!);
+        
+        if (_currentDoctorId != null) {
+          await _loadPatients();
+        } else {
+          setState(() {
+            _error = 'Unable to identify doctor profile';
+            _isLoading = false;
+          });
+        }
       } else {
         setState(() {
-          _error = 'Unable to identify doctor';
+          _error = 'No user logged in';
           _isLoading = false;
         });
       }
@@ -43,6 +55,20 @@ class _DoctorHomeState extends State<DoctorHome> {
         _error = 'Error initializing: ${e.toString()}';
         _isLoading = false;
       });
+    }
+  }
+
+  // Map email to doctor ID (in real app, this should be stored in database)
+  String? _mapEmailToDoctorId(String email) {
+    switch (email) {
+      case 'doctor1@hospital.com':
+        return 'doctor1';
+      case 'doctor2@hospital.com':
+        return 'doctor2';
+      case 'doctor3@hospital.com':
+        return 'doctor3';
+      default:
+        return null;
     }
   }
 
@@ -74,14 +100,12 @@ class _DoctorHomeState extends State<DoctorHome> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => NFCScanScreen(
-          action: NFCAction.read,
-          onDataRead: (data) {
-            _handleScannedPatientData(data);
-          },
+        builder: (context) => DoctorNFCScanner(
+          doctorId: _currentDoctorId!,
+          doctorName: _doctorInfo?['name'] ?? 'Doctor',
         ),
       ),
-    );
+    ).then((_) => _loadPatients()); // Refresh patient list when returning
   }
 
   // Handle scanned patient data
@@ -482,7 +506,83 @@ class _DoctorHomeState extends State<DoctorHome> {
 
     return Column(
       children: [
-        // Quick stats and actions
+        // Doctor Profile Section
+        if (_doctorInfo != null)
+          Container(
+            padding: EdgeInsets.all(16),
+            margin: EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Theme.of(context).primaryColor.withOpacity(0.8),
+                  Theme.of(context).primaryColor,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Theme.of(context).primaryColor.withOpacity(0.3),
+                  spreadRadius: 1,
+                  blurRadius: 8,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 30,
+                  backgroundColor: Colors.white.withOpacity(0.2),
+                  child: Icon(
+                    Icons.local_hospital,
+                    color: Colors.white,
+                    size: 30,
+                  ),
+                ),
+                SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _doctorInfo!['name'] ?? 'Doctor',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        _doctorInfo!['specialization'] ?? 'General Medicine',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.9),
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_patients.length} Patients',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        
+        // Quick actions section
         Container(
           padding: EdgeInsets.all(16),
           color: Colors.grey.withOpacity(0.1),
@@ -518,6 +618,12 @@ class _DoctorHomeState extends State<DoctorHome> {
                     },
                     color: Colors.green,
                   ),
+                  _buildActionButton(
+                    icon: Icons.refresh,
+                    label: 'Refresh List',
+                    onPressed: _loadPatients,
+                    color: Colors.orange,
+                  ),
                 ],
               ),
             ],
@@ -540,14 +646,18 @@ class _DoctorHomeState extends State<DoctorHome> {
               Container(
                 padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).primaryColor.withOpacity(0.1),
+                  color: _patients.isEmpty 
+                      ? Colors.grey.withOpacity(0.1)
+                      : Theme.of(context).primaryColor.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
                   '${_patients.length} patients',
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    color: Theme.of(context).primaryColor,
+                    color: _patients.isEmpty 
+                        ? Colors.grey[600]
+                        : Theme.of(context).primaryColor,
                   ),
                 ),
               ),
@@ -563,34 +673,59 @@ class _DoctorHomeState extends State<DoctorHome> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
-                        Icons.person_search,
-                        size: 60,
-                        color: Colors.grey,
+                        Icons.assignment_ind,
+                        size: 80,
+                        color: Colors.grey[400],
                       ),
                       SizedBox(height: 16),
                       Text(
-                        'No patients assigned to you yet',
+                        'No patients assigned yet',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
                           color: Colors.grey[600],
                         ),
                         textAlign: TextAlign.center,
                       ),
-                      SizedBox(height: 16),
+                      SizedBox(height: 8),
                       Text(
-                        'Use the scan button to quickly find patient information',
+                        'When a nurse assigns patients to you,\nthey will appear here automatically',
                         style: TextStyle(
                           fontSize: 14,
                           color: Colors.grey[500],
-                          fontStyle: FontStyle.italic,
                         ),
                         textAlign: TextAlign.center,
+                      ),
+                      SizedBox(height: 24),
+                      Container(
+                        padding: EdgeInsets.all(16),
+                        margin: EdgeInsets.symmetric(horizontal: 32),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(Icons.info, color: Colors.blue, size: 24),
+                            SizedBox(height: 8),
+                            Text(
+                              'You can still scan patient cards to view their information',
+                              style: TextStyle(
+                                color: Colors.blue[800],
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
                       ),
                       SizedBox(height: 16),
                       ElevatedButton.icon(
                         onPressed: _loadPatients,
                         icon: Icon(Icons.refresh),
-                        label: Text('Refresh'),
+                        label: Text('Check for New Assignments'),
                       ),
                     ],
                   ),
@@ -691,7 +826,7 @@ class _DoctorHomeState extends State<DoctorHome> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    'Room ${patient['roomNumber'] ?? 'N/A'}',
+                    'Room ${patient['roomNumber'] ?? patient['assignedRoom'] ?? 'N/A'}',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       color: Colors.teal,
@@ -720,34 +855,31 @@ class _DoctorHomeState extends State<DoctorHome> {
                 value: patient['bloodType'],
               ),
 
-            // Collapsible sections
-            _buildExpandableSection(
-              title: 'Allergies',
-              icon: Icons.dangerous,
-              items:
-                  (patient['allergies'] as List<dynamic>?)
-                      ?.map((e) => e.toString())
-                      .toList() ??
-                  [],
-            ),
-            _buildExpandableSection(
-              title: 'Current Medications',
-              icon: Icons.medication,
-              items:
-                  (patient['medications'] as List<dynamic>?)
-                      ?.map((e) => e.toString())
-                      .toList() ??
-                  [],
-            ),
-            _buildExpandableSection(
-              title: 'Medical Conditions',
-              icon: Icons.healing,
-              items:
-                  (patient['conditions'] as List<dynamic>?)
-                      ?.map((e) => e.toString())
-                      .toList() ??
-                  [],
-            ),
+            // Show if patient was recently assigned
+            if (patient['lastUpdated'] != null)
+              Container(
+                margin: EdgeInsets.symmetric(vertical: 8),
+                padding: EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.assignment_ind, color: Colors.green, size: 16),
+                    SizedBox(width: 8),
+                    Text(
+                      'Recently assigned to you by nurse',
+                      style: TextStyle(
+                        color: Colors.green[800],
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
             SizedBox(height: 16),
 
@@ -818,57 +950,6 @@ class _DoctorHomeState extends State<DoctorHome> {
           Expanded(child: Text(value, style: TextStyle(color: Colors.black87))),
         ],
       ),
-    );
-  }
-
-  Widget _buildExpandableSection({
-    required String title,
-    required IconData icon,
-    required List<String> items,
-  }) {
-    return ExpansionTile(
-      title: Row(
-        children: [
-          Icon(icon, size: 20, color: Theme.of(context).primaryColor),
-          SizedBox(width: 8),
-          Text(
-            title,
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-          ),
-          SizedBox(width: 8),
-          Text(
-            '(${items.length})',
-            style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-          ),
-        ],
-      ),
-      children:
-          items.isEmpty
-              ? [
-                Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text(
-                    'No $title recorded',
-                    style: TextStyle(
-                      fontStyle: FontStyle.italic,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                ),
-              ]
-              : items.map((item) {
-                return Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.circle, size: 8, color: Colors.grey[600]),
-                      SizedBox(width: 8),
-                      Expanded(child: Text(item)),
-                    ],
-                  ),
-                );
-              }).toList(),
     );
   }
 }
