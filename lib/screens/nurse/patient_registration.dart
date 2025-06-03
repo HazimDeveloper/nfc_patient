@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:nfc_patient_registration/services/database_service.dart';
-import 'package:nfc_patient_registration/services/card_security_sevice.dart';
-import 'package:nfc_patient_registration/screens/patient/nfc_scan_screen.dart';
 
 class PatientRegistrationScreen extends StatefulWidget {
   final String? cardSerialNumber;
@@ -42,8 +40,6 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
   
   DateTime? _selectedDate;
   String _effectiveCardSerialNumber = '';
-  String? _cardValidationStatus;
-  Map<String, dynamic>? _tokenInfo;
   
   @override
   void initState() {
@@ -60,7 +56,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('🔐 NFC card is required for secure patient registration'),
+            content: Text('NFC card is required for patient registration'),
             backgroundColor: Colors.red,
           ),
         );
@@ -69,7 +65,6 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     }
   }
   
-  // 🔐 Enhanced card validation with full security checking
   Future<void> _validateCard() async {
     try {
       setState(() {
@@ -80,189 +75,95 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
       final databaseService = DatabaseService();
       final cardCheck = await databaseService.checkCardRegistration(_effectiveCardSerialNumber);
       
-      if (cardCheck != null) {
-        final status = cardCheck['registrationStatus'];
-        final isRegistered = cardCheck['isRegistered'] == true;
-        
-        setState(() {
-          _cardValidationStatus = status;
-          _isLoading = false;
-        });
-        
-        switch (status) {
-          case 'LOCKED':
-            // Card is permanently locked
-            final lockInfo = cardCheck['lockInfo'];
-            _showCardAlreadyRegisteredDialog(cardCheck['patientData'], lockInfo);
-            setState(() {
-              _isCardValidated = false;
-              _errorMessage = '🔒 This NFC card is permanently locked to ${lockInfo['patientName']} (Registered: ${lockInfo['registrationDate']})';
-            });
-            break;
-            
-          case 'CARD_DATA_FOUND':
-          case 'DATABASE_FOUND':
-            // Patient already registered
-            final existingPatient = cardCheck['patientData'];
-            _showCardAlreadyRegisteredDialog(existingPatient);
-            setState(() {
-              _isCardValidated = false;
-              _errorMessage = '👥 This NFC card is already registered to ${existingPatient['name']}';
-            });
-            break;
-            
-          case 'TOKEN_AVAILABLE':
-            // Card has valid registration token - ready for registration
-            final tokenInfo = cardCheck['tokenInfo'];
-            setState(() {
-              _isCardValidated = true;
-              _errorMessage = '';
-              _tokenInfo = tokenInfo;
-            });
-            break;
-            
-          case 'BLANK_CARD':
-            // Card needs initialization
-            setState(() {
-              _isCardValidated = false;
-              _errorMessage = '🆕 This card needs to be initialized first. Please contact system administrator.';
-            });
-            _showBlankCardDialog();
-            break;
-            
-          default:
-            // Unknown status
-            setState(() {
-              _isCardValidated = false;
-              _errorMessage = '❓ Unable to validate card: ${cardCheck['message']}';
-            });
-        }
-      } else {
+      if (cardCheck != null && cardCheck['isRegistered'] == true) {
+        final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
+        _showCardAlreadyRegisteredDialog(existingPatient);
         setState(() {
           _isCardValidated = false;
-          _errorMessage = '❌ Unable to validate NFC card. Please try scanning again.';
-          _isLoading = false;
+          _errorMessage = 'This NFC card is already registered to ${existingPatient['name']}.';
+        });
+      } else {
+        setState(() {
+          _isCardValidated = true;
+          _errorMessage = '';
         });
       }
     } catch (e) {
       setState(() {
         _isCardValidated = false;
-        _errorMessage = '⚠️ Unable to validate NFC card: ${e.toString()}';
+        _errorMessage = 'Unable to validate NFC card: ${e.toString()}';
+      });
+    } finally {
+      setState(() {
         _isLoading = false;
       });
     }
   }
   
-  // Show dialog for already registered cards with enhanced security info
-  void _showCardAlreadyRegisteredDialog(Map<String, dynamic> existingPatient, [Map<String, dynamic>? lockInfo]) {
-    final isLocked = lockInfo != null;
-    
+  void _showCardAlreadyRegisteredDialog(Map<String, dynamic> existingPatient) {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            Icon(
-              isLocked ? Icons.lock : Icons.person, 
-              color: isLocked ? Colors.red : Colors.orange
-            ),
+            Icon(Icons.person, color: Colors.orange),
             SizedBox(width: 8),
-            Text(isLocked ? 'Card Security Lock' : 'Patient Found'),
+            Text('Patient Found'),
           ],
         ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (isLocked) ...[
-                Container(
-                  padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.red),
-                  ),
-                  child: Column(
-                    children: [
-                      Icon(Icons.security, color: Colors.red, size: 32),
-                      SizedBox(height: 8),
-                      Text(
-                        '🔒 PERMANENT SECURITY LOCK',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.red[800],
-                        ),
-                      ),
-                      SizedBox(height: 8),
-                      Text(
-                        'This card is cryptographically locked and cannot be reused for security reasons.',
-                        style: TextStyle(fontSize: 12),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                ),
-                SizedBox(height: 16),
-              ],
-              
-              Text(
-                'This NFC card is registered to:',
-                style: TextStyle(fontWeight: FontWeight.bold, color: isLocked ? Colors.red[700] : Colors.orange[700]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This NFC card is already registered to:',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange[700]),
+            ),
+            SizedBox(height: 12),
+            Container(
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
               ),
-              SizedBox(height: 12),
-              Container(
-                padding: EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Name: ${existingPatient['name'] ?? 'Unknown'}', 
-                         style: TextStyle(fontWeight: FontWeight.bold)),
-                    Text('Patient ID: ${existingPatient['patientId'] ?? 'Unknown'}'),
-                    Text('Phone: ${existingPatient['phone'] ?? 'Unknown'}'),
-                    if (existingPatient['email'] != null)
-                      Text('Email: ${existingPatient['email']}'),
-                    if (isLocked) ...[
-                      SizedBox(height: 8),
-                      Text('Registration Date: ${lockInfo!['registrationDate']}'),
-                      Text('Security Level: Ultimate Protection'),
-                    ],
-                  ],
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Name: ${existingPatient['name'] ?? 'Unknown'}', 
+                       style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text('Patient ID: ${existingPatient['patientId'] ?? 'Unknown'}'),
+                  Text('Phone: ${existingPatient['phone'] ?? 'Unknown'}'),
+                  if (existingPatient['email'] != null)
+                    Text('Email: ${existingPatient['email']}'),
+                ],
               ),
-              SizedBox(height: 12),
-              Container(
-                padding: EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: isLocked ? Colors.red.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: isLocked ? Colors.red.withOpacity(0.3) : Colors.blue.withOpacity(0.3)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.info, color: isLocked ? Colors.red : Colors.blue, size: 20),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        isLocked 
-                            ? '🔐 Each NFC card is permanently locked to one patient using cryptographic security. This prevents unauthorized reuse and ensures data integrity.'
-                            : 'The patient data is already in the system. You can view their details or assign them to a doctor if needed.',
-                        style: TextStyle(
-                          color: isLocked ? Colors.red[800] : Colors.blue[800],
-                          fontSize: 12,
-                        ),
+            ),
+            SizedBox(height: 12),
+            Container(
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info, color: Colors.blue, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'The patient data is already in the system. You can view their details or assign them to a doctor if needed.',
+                      style: TextStyle(
+                        color: Colors.blue[800],
+                        fontSize: 12,
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -270,62 +171,15 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
               Navigator.pop(context);
               Navigator.pop(context); // Go back to scan screen
             },
-            child: Text('Use Different Card'),
+            child: Text('Go Back'),
           ),
-          if (!isLocked)
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.pop(context); // Go back to scan screen
-                // The scan screen will handle showing patient options
-              },
-              child: Text('View Patient'),
-            ),
-        ],
-      ),
-    );
-  }
-  
-  // Show dialog for blank cards
-  void _showBlankCardDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.credit_card, color: Colors.orange),
-            SizedBox(width: 8),
-            Text('Card Initialization Required'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.settings, size: 48, color: Colors.orange),
-            SizedBox(height: 16),
-            Text(
-              'This card needs to be initialized with a registration token before it can be used for patient registration.',
-              textAlign: TextAlign.center,
-            ),
-            SizedBox(height: 16),
-            Container(
-              padding: EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                '💡 Please contact your system administrator to initialize this card.',
-                style: TextStyle(fontSize: 12, color: Colors.blue[800]),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('OK'),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pop(context); // Go back to scan screen
+              // The scan screen will handle showing patient options
+            },
+            child: Text('View Patient'),
           ),
         ],
       ),
@@ -388,7 +242,6 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     });
   }
   
-  // 🔐 Enhanced secure registration with all security layers
   Future<void> _submitForm() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -396,21 +249,17 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
 
     if (!_isCardValidated) {
       setState(() {
-        _errorMessage = '🔐 Please use a valid NFC card for secure registration';
+        _errorMessage = 'Please use a valid NFC card for registration';
       });
       return;
     }
     
     if (_effectiveCardSerialNumber.isEmpty) {
       setState(() {
-        _errorMessage = '🔐 NFC card is required for secure registration';
+        _errorMessage = 'NFC card is required for registration';
       });
       return;
     }
-    
-    // Show confirmation dialog before proceeding
-    final confirmed = await _showRegistrationConfirmationDialog();
-    if (!confirmed) return;
     
     setState(() {
       _isLoading = true;
@@ -419,9 +268,6 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     
     try {
       final databaseService = DatabaseService();
-      
-      // Show progress dialog
-      _showProgressDialog();
       
       final patientData = await databaseService.registerPatient(
         name: _nameController.text.trim(),
@@ -440,25 +286,13 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
         cardSerialNumber: _effectiveCardSerialNumber,
       );
       
-      // Close progress dialog
-      Navigator.pop(context);
-      
       if (mounted) {
-        // Show success dialog
         _showSuccessDialog(patientData);
       }
     } catch (e) {
-      // Close progress dialog if open
-      if (Navigator.canPop(context)) {
-        Navigator.pop(context);
-      }
-      
       setState(() {
         _errorMessage = e.toString();
       });
-      
-      // Show error dialog
-      _showErrorDialog(e.toString());
     } finally {
       if (mounted) {
         setState(() {
@@ -468,134 +302,6 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     }
   }
 
-  // Show registration confirmation dialog
-  Future<bool> _showRegistrationConfirmationDialog() async {
-    return await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.security, color: Colors.green),
-            SizedBox(width: 8),
-            Text('Confirm Secure Registration'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'You are about to register:',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: 12),
-            Container(
-              padding: EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Name: ${_nameController.text.trim()}'),
-                  Text('Email: ${_emailController.text.trim()}'),
-                  Text('Phone: ${_phoneController.text.trim()}'),
-                  Text('Date of Birth: ${_dobController.text.trim()}'),
-                  Text('Gender: $_selectedGender'),
-                ],
-              ),
-            ),
-            SizedBox(height: 12),
-            Container(
-              padding: EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.green.withOpacity(0.3)),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.security, color: Colors.green, size: 20),
-                      SizedBox(width: 8),
-                      Text(
-                        'Security Measures Active',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green[800],
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    '🔐 Card will be permanently locked\n'
-                    '🎫 Registration token will be consumed\n'
-                    '📋 Patient data will be embedded on card\n'
-                    '✅ Cryptographic signature will be generated',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.green[700],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            SizedBox(height: 12),
-            Text(
-              '⚠️ This action cannot be undone. The NFC card will be permanently linked to this patient.',
-              style: TextStyle(
-                color: Colors.orange[800],
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-            ),
-            child: Text('Confirm Registration'),
-          ),
-        ],
-      ),
-    ) ?? false;
-  }
-
-  // Show progress dialog during registration
-  void _showProgressDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('🔐 Securing patient registration...'),
-            SizedBox(height: 8),
-            Text(
-              'Applying cryptographic security measures',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Show success dialog
   void _showSuccessDialog(Map<String, dynamic> patientData) {
     showDialog(
       context: context,
@@ -620,10 +326,10 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
               ),
               child: Column(
                 children: [
-                  Icon(Icons.security, color: Colors.green, size: 48),
+                  Icon(Icons.person_add, color: Colors.green, size: 48),
                   SizedBox(height: 12),
                   Text(
-                    '🎉 Patient Successfully Registered',
+                    'Patient Successfully Registered',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 16,
@@ -635,23 +341,6 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                   Text('Patient: ${patientData['name']}'),
                   Text('ID: ${patientData['patientId']}'),
                   Text('Card: ${patientData['cardSerialNumber']}'),
-                  SizedBox(height: 16),
-                  Container(
-                    padding: EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      '🔒 NFC card is now permanently secured with ultimate protection',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.blue[800],
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -674,56 +363,11 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
     );
   }
 
-  // Show error dialog
-  void _showErrorDialog(String error) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.error, color: Colors.red),
-            SizedBox(width: 8),
-            Text('Registration Failed'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Registration could not be completed:'),
-            SizedBox(height: 12),
-            Container(
-              padding: EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                error,
-                style: TextStyle(color: Colors.red[700]),
-              ),
-            ),
-            SizedBox(height: 12),
-            Text(
-              'Please check the information and try again.',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-            ),
-          ],
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('🔐 Secure Patient Registration', style: TextStyle(color: Colors.white)),
+        title: Text('Register New Patient', style: TextStyle(color: Colors.white)),
         centerTitle: true,
         backgroundColor: Theme.of(context).primaryColor,
       ),
@@ -734,7 +378,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
           child: ListView(
             padding: EdgeInsets.all(16),
             children: [
-              // NFC Card Security Information
+              // NFC Card Information
               _buildNFCCardInfoCard(),
               SizedBox(height: 24),
               
@@ -886,9 +530,6 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                 // Submit button
                 _buildSubmitButton(),
                 SizedBox(height: 16),
-                
-                // Security information
-                _buildSecurityInfoCard(),
               ],
             ],
           ),
@@ -898,9 +539,6 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
   }
   
   Widget _buildNFCCardInfoCard() {
-    Color cardColor = _isCardValidated ? Colors.green : 
-                     (_cardValidationStatus == 'LOCKED' ? Colors.red : Colors.orange);
-    
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -912,16 +550,16 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
             Row(
               children: [
                 Icon(
-                  _isCardValidated ? Icons.security : Icons.contactless,
-                  color: cardColor,
+                  Icons.contactless,
+                  color: _isCardValidated ? Colors.green : Colors.orange,
                 ),
                 SizedBox(width: 8),
                 Text(
-                  '🔐 Secure NFC Card Registration',
+                  'NFC Card Registration',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Colors.black87,
+                    color: _isCardValidated ? Colors.green[800] : Colors.orange[800],
                   ),
                 ),
               ],
@@ -931,46 +569,29 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
               width: double.infinity,
               padding: EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: cardColor.withOpacity(0.1),
+                color: (_isCardValidated ? Colors.green : Colors.orange).withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: cardColor,
+                  color: _isCardValidated ? Colors.green : Colors.orange,
                   width: 1
                 ),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Icon(Icons.credit_card, size: 16, color: cardColor),
-                      SizedBox(width: 4),
-                      Text(
-                        'Card Serial: $_effectiveCardSerialNumber',
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
+                  Text(
+                    'Card Serial Number: $_effectiveCardSerialNumber',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   SizedBox(height: 4),
-                  if (_tokenInfo != null) ...[
-                    Row(
-                      children: [
-                        Icon(Icons.schedule, size: 16, color: cardColor),
-                        SizedBox(width: 4),
-                        Text(
-                          'Token Generated: ${_tokenInfo!['generatedAt']?.substring(0, 10) ?? 'Unknown'}',
-                          style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: 4),
-                  ],
                   Text(
-                    _getCardStatusMessage(),
+                    _isCardValidated 
+                        ? 'This NFC card is available and will be linked to the patient.'
+                        : 'Validating NFC card...',
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.grey[700],
@@ -984,14 +605,6 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
         ),
       ),
     );
-  }
-
-  String _getCardStatusMessage() {
-    if (_isLoading) return 'Validating card security...';
-    if (_isCardValidated) return 'Card validated and ready for secure registration.';
-    if (_cardValidationStatus == 'LOCKED') return 'Card is permanently locked to another patient.';
-    if (_cardValidationStatus == 'BLANK_CARD') return 'Card needs initialization.';
-    return 'Card validation in progress...';
   }
 
   Widget _buildLoadingCard() {
@@ -1010,7 +623,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Validating Card Security',
+                    'Validating Card',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -1018,7 +631,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    'Checking registration token, locks, and security measures...',
+                    'Checking if this card is already registered...',
                     style: TextStyle(
                       color: Colors.grey[600],
                       fontSize: 14,
@@ -1053,7 +666,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                 SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    '✅ Card Security Validated',
+                    'Card Available',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -1065,7 +678,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
             ),
             SizedBox(height: 8),
             Text(
-              'This NFC card has a valid registration token and is ready for secure patient registration.',
+              'This NFC card is available for patient registration.',
               style: TextStyle(
                 color: Colors.green[700],
                 fontSize: 14,
@@ -1097,7 +710,7 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                 SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    '❌ Card Validation Failed',
+                    'Card Already Registered',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -1431,54 +1044,13 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
                 strokeWidth: 2,
               ),
             )
-          : Icon(Icons.security),
-      label: Text(_isLoading ? 'Securing Registration...' : '🔐 Register Patient Securely'),
+          : Icon(Icons.person_add),
+      label: Text(_isLoading ? 'Registering...' : 'Register Patient with NFC Card'),
       style: ElevatedButton.styleFrom(
         padding: EdgeInsets.symmetric(vertical: 16),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        backgroundColor: _isCardValidated ? Colors.green : Colors.grey,
+        backgroundColor: _isCardValidated ? Theme.of(context).primaryColor : Colors.grey,
         foregroundColor: Colors.white,
-      ),
-    );
-  }
-  
-  Widget _buildSecurityInfoCard() {
-    return Container(
-      padding: EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.blue.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.blue.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Icon(Icons.security, color: Colors.blue, size: 20),
-              SizedBox(width: 8),
-              Text(
-                '🔐 Ultimate Security Registration',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.blue[800],
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 8),
-          Text(
-            '• NFC card will be permanently locked to this patient\n'
-            '• Registration token will be consumed and cannot be reused\n'
-            '• Patient data will be embedded on the card with encryption\n'
-            '• Cryptographic signature will prevent tampering\n'
-            '• Multiple security layers ensure complete protection\n'
-            '• This registration process cannot be reversed',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.blue[700],
-            ),
-          ),
-        ],
       ),
     );
   }
