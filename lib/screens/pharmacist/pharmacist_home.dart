@@ -1,44 +1,63 @@
 import 'package:flutter/material.dart';
+import 'package:nfc_patient_registration/screens/common/enhance_nfc_patient_scanner.dart';
 import 'package:provider/provider.dart';
 import 'package:nfc_patient_registration/services/auth_service.dart';
 import 'package:nfc_patient_registration/services/database_service.dart';
 import 'package:nfc_patient_registration/models/prescription.dart';
 import 'package:nfc_patient_registration/screens/pharmacist/prescription_view.dart';
-import 'package:nfc_patient_registration/screens/patient/nfc_scan_screen.dart';
 
 class PharmacistHome extends StatefulWidget {
   @override
   _PharmacistHomeState createState() => _PharmacistHomeState();
 }
 
-class _PharmacistHomeState extends State<PharmacistHome> {
+class _PharmacistHomeState extends State<PharmacistHome> with SingleTickerProviderStateMixin {
   final DatabaseService _databaseService = DatabaseService();
   List<Map<String, dynamic>> _pendingPrescriptions = [];
+  List<Map<String, dynamic>> _completedPrescriptions = [];
+  Map<String, int> _statistics = {};
   bool _isLoading = true;
   String? _error;
+  
+  late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
-    _loadPendingPrescriptions();
+    _tabController = TabController(length: 2, vsync: this);
+    _loadData();
+  }
+  
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
-  // Load pending prescriptions
-  Future<void> _loadPendingPrescriptions() async {
+  // Load all prescription data
+  Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
       _error = null;
     });
 
     try {
-      final prescriptions = await _databaseService.getPendingPrescriptions();
+      // Load prescriptions and statistics in parallel
+      final results = await Future.wait([
+        _databaseService.getPrescriptionsByStatus('pending'),
+        _databaseService.getCompletedPrescriptions(limit: 50), // Limit to recent 50
+        _databaseService.getPrescriptionStatistics(),
+      ]);
+      
       setState(() {
-        _pendingPrescriptions = prescriptions;
+        _pendingPrescriptions = results[0] as List<Map<String, dynamic>>;
+        _completedPrescriptions = results[1] as List<Map<String, dynamic>>;
+        _statistics = results[2] as Map<String, int>;
         _isLoading = false;
       });
     } catch (e) {
       setState(() {
-        _error = 'Error loading prescriptions: ${e.toString()}';
+        _error = 'Error loading data: ${e.toString()}';
         _isLoading = false;
       });
     }
@@ -50,246 +69,106 @@ class _PharmacistHomeState extends State<PharmacistHome> {
     
     return Scaffold(
       appBar: AppBar(
-        title: Text('Pharmacist Dashboard',style: TextStyle(color: Colors.white)),
+        title: Text('Pharmacist Dashboard', style: TextStyle(color: Colors.white)),
+        backgroundColor: Theme.of(context).primaryColor,
         actions: [
+          IconButton(
+            icon: Icon(Icons.refresh),
+            onPressed: _loadData,
+            tooltip: 'Refresh',
+          ),
           IconButton(
             icon: Icon(Icons.exit_to_app),
             onPressed: () => authService.signOut(),
             tooltip: 'Sign Out',
           ),
         ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _loadPendingPrescriptions,
-        child: _buildBody(),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => NFCScanScreen(
-                action: NFCAction.read,
-                onDataRead: (data) {
-                  // When a patient card is scanned, look up their pending prescriptions
-                  if (data.containsKey('patientId')) {
-                    final patientId = data['patientId'];
-                    _loadPatientPrescriptions(patientId);
-                  }
-                },
-              ),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: [
+            Tab(
+              icon: Icon(Icons.pending_actions),
+              text: 'Pending (${_statistics['pending'] ?? 0})',
             ),
-          );
-        },
-        icon: Icon(Icons.contactless),
-        label: Text('Scan Patient Card'),
-      ),
-    );
-  }
-
-  // Load prescriptions for a specific patient
-  Future<void> _loadPatientPrescriptions(String patientId) async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-
-    try {
-      final prescriptions = await _databaseService.getPrescriptionsByPatient(patientId);
-      
-      if (prescriptions.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('No prescriptions found for this patient'),
-          ),
-        );
-        setState(() {
-          _isLoading = false;
-        });
-        return;
-      }
-      
-      // Navigate to the first pending prescription or show a message
-      final pendingPrescriptions = prescriptions.where(
-        (prescription) => prescription['status'] == 'pending',
-      ).toList();
-      
-      if (pendingPrescriptions.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('No pending prescriptions for this patient'),
-          ),
-        );
-        setState(() {
-          _isLoading = false;
-        });
-        return;
-      }
-      
-      // Navigate to the first pending prescription
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PrescriptionView(
-            prescription: Prescription.fromFirestore(
-              pendingPrescriptions.first,
-              pendingPrescriptions.first['prescriptionId'],
-            ),
-          ),
-        ),
-      ).then((_) => _loadPendingPrescriptions());
-      
-      setState(() {
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _error = 'Error loading patient prescriptions: ${e.toString()}';
-        _isLoading = false;
-      });
-    }
-  }
-
-  Widget _buildBody() {
-    if (_isLoading) {
-      return Center(
-        child: CircularProgressIndicator(),
-      );
-    }
-
-    if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.error_outline,
-              size: 60,
-              color: Colors.red,
-            ),
-            SizedBox(height: 16),
-            Text(
-              _error!,
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.red,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: _loadPendingPrescriptions,
-              icon: Icon(Icons.refresh),
-              label: Text('Try Again'),
+            Tab(
+              icon: Icon(Icons.check_circle),
+              text: 'Completed (${_statistics['completedToday'] ?? 0} today)',
             ),
           ],
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          indicatorColor: Colors.white,
         ),
-      );
-    }
-
-    return Column(
-      children: [
-        // Statistics bar
-        Container(
-          padding: EdgeInsets.all(16),
-          color: Colors.grey.withOpacity(0.1),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildStatCard(
-                icon: Icons.receipt,
-                value: _pendingPrescriptions.length.toString(),
-                label: 'Pending',
-                color: Colors.orange,
+      ),
+      body: Column(
+        children: [
+          // Statistics bar
+          _buildStatisticsBar(),
+          
+          // Tab content
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _loadData,
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildPendingTab(),
+                  _buildCompletedTab(),
+                ],
               ),
-              _buildStatCard(
-                icon: Icons.check_circle,
-                value: '0', // Placeholder, would need to fetch this data
-                label: 'Completed Today',
-                color: Colors.green,
-              ),
-              _buildStatCard(
-                icon: Icons.people,
-                value: '0', // Placeholder, would need to fetch this data
-                label: 'Patients Served',
-                color: Colors.blue,
-              ),
-            ],
+            ),
           ),
-        ),
-        
-        // Pending prescriptions header
-        Padding(
-          padding: EdgeInsets.all(16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Pending Prescriptions',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              if (_pendingPrescriptions.isNotEmpty)
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '${_pendingPrescriptions.length} pending',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.orange,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        
-        // Prescription list
-        Expanded(
-          child: _pendingPrescriptions.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.check_circle,
-                        size: 60,
-                        color: Colors.green,
-                      ),
-                      SizedBox(height: 16),
-                      Text(
-                        'No pending prescriptions',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.grey[600],
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                )
-              : ListView.builder(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: _pendingPrescriptions.length,
-                  itemBuilder: (context, index) {
-                    final prescription = _pendingPrescriptions[index];
-                    return _buildPrescriptionCard(prescription);
-                  },
-                ),
-        ),
-      ],
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _scanPatientCard,
+        icon: Icon(Icons.contactless),
+        label: Text('Scan Patient Card'),
+        backgroundColor: Theme.of(context).primaryColor,
+      ),
     );
   }
-
+  
+  Widget _buildStatisticsBar() {
+    if (_isLoading) {
+      return Container(
+        height: 100,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    
+    return Container(
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey.withOpacity(0.1),
+        border: Border(bottom: BorderSide(color: Colors.grey.withOpacity(0.3))),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _buildStatCard(
+            icon: Icons.pending_actions,
+            value: (_statistics['pending'] ?? 0).toString(),
+            label: 'Pending',
+            color: Colors.orange,
+          ),
+          _buildStatCard(
+            icon: Icons.local_pharmacy,
+            value: (_statistics['dispensed'] ?? 0).toString(),
+            label: 'Dispensed',
+            color: Colors.blue,
+          ),
+          _buildStatCard(
+            icon: Icons.check_circle,
+            value: (_statistics['completedToday'] ?? 0).toString(),
+            label: 'Completed Today',
+            color: Colors.green,
+          ),
+        ],
+      ),
+    );
+  }
+  
   Widget _buildStatCard({
     required IconData icon,
     required String value,
@@ -298,14 +177,13 @@ class _PharmacistHomeState extends State<PharmacistHome> {
   }) {
     return Column(
       children: [
-        CircleAvatar(
-          radius: 24,
-          backgroundColor: color.withOpacity(0.1),
-          child: Icon(
-            icon,
-            color: color,
-            size: 24,
+        Container(
+          padding: EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            shape: BoxShape.circle,
           ),
+          child: Icon(icon, color: color, size: 24),
         ),
         SizedBox(height: 8),
         Text(
@@ -322,12 +200,116 @@ class _PharmacistHomeState extends State<PharmacistHome> {
             fontSize: 12,
             color: Colors.grey[600],
           ),
+          textAlign: TextAlign.center,
         ),
       ],
     );
   }
+  
+  Widget _buildPendingTab() {
+    if (_isLoading) {
+      return Center(child: CircularProgressIndicator());
+    }
 
-  Widget _buildPrescriptionCard(Map<String, dynamic> prescriptionData) {
+    if (_error != null) {
+      return _buildErrorWidget();
+    }
+
+    if (_pendingPrescriptions.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.check_circle, size: 80, color: Colors.green),
+            SizedBox(height: 16),
+            Text(
+              'No pending prescriptions',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'All prescriptions have been processed!',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: EdgeInsets.all(16),
+      itemCount: _pendingPrescriptions.length,
+      itemBuilder: (context, index) {
+        final prescription = _pendingPrescriptions[index];
+        return _buildPrescriptionCard(prescription, isPending: true);
+      },
+    );
+  }
+  
+  Widget _buildCompletedTab() {
+    if (_isLoading) {
+      return Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null) {
+      return _buildErrorWidget();
+    }
+
+    if (_completedPrescriptions.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.history, size: 80, color: Colors.grey),
+            SizedBox(height: 16),
+            Text(
+              'No completed prescriptions yet',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Completed prescriptions will appear here',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: EdgeInsets.all(16),
+      itemCount: _completedPrescriptions.length,
+      itemBuilder: (context, index) {
+        final prescription = _completedPrescriptions[index];
+        return _buildPrescriptionCard(prescription, isPending: false);
+      },
+    );
+  }
+  
+  Widget _buildErrorWidget() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.error_outline, size: 60, color: Colors.red),
+          SizedBox(height: 16),
+          Text(
+            _error!,
+            style: TextStyle(fontSize: 16, color: Colors.red),
+            textAlign: TextAlign.center,
+          ),
+          SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: _loadData,
+            icon: Icon(Icons.refresh),
+            label: Text('Try Again'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrescriptionCard(Map<String, dynamic> prescriptionData, {required bool isPending}) {
     final prescription = Prescription.fromFirestore(
       prescriptionData,
       prescriptionData['prescriptionId'],
@@ -339,26 +321,46 @@ class _PharmacistHomeState extends State<PharmacistHome> {
         : prescription.medications.map((med) => med.name).join(', ');
     
     // Format timestamp
-    final createdAt = prescription.createdAt;
-    final formattedDate = '${createdAt.day}/${createdAt.month}/${createdAt.year}';
-    final formattedTime = '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+    final timestamp = isPending ? prescription.createdAt : prescription.updatedAt;
+    final formattedDate = '${timestamp.day}/${timestamp.month}/${timestamp.year}';
+    final formattedTime = '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}';
+    
+    // Status color
+    Color statusColor;
+    String statusText;
+    switch (prescription.status) {
+      case 'pending':
+        statusColor = Colors.orange;
+        statusText = 'PENDING';
+        break;
+      case 'dispensed':
+        statusColor = Colors.blue;
+        statusText = 'DISPENSED';
+        break;
+      case 'completed':
+        statusColor = Colors.green;
+        statusText = 'COMPLETED';
+        break;
+      default:
+        statusColor = Colors.grey;
+        statusText = prescription.status.toUpperCase();
+    }
 
     return Card(
       margin: EdgeInsets.only(bottom: 16),
-      elevation: 2,
+      elevation: isPending ? 3 : 1,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
+        side: isPending ? BorderSide(color: statusColor.withOpacity(0.3), width: 1) : BorderSide.none,
       ),
       child: InkWell(
         onTap: () {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => PrescriptionView(
-                prescription: prescription,
-              ),
+              builder: (context) => PrescriptionView(prescription: prescription),
             ),
-          ).then((_) => _loadPendingPrescriptions());
+          ).then((_) => _loadData());
         },
         borderRadius: BorderRadius.circular(12),
         child: Padding(
@@ -366,16 +368,16 @@ class _PharmacistHomeState extends State<PharmacistHome> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Patient and doctor info
+              // Header row
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   CircleAvatar(
-                    backgroundColor: Theme.of(context).primaryColor,
+                    backgroundColor: statusColor.withOpacity(0.2),
                     child: Text(
                       prescription.patientName?.substring(0, 1).toUpperCase() ?? 'P',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: statusColor,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -388,143 +390,162 @@ class _PharmacistHomeState extends State<PharmacistHome> {
                         Text(
                           prescription.patientName ?? 'Unknown Patient',
                           style: TextStyle(
-                            fontSize: 18,
+                            fontSize: 16,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        SizedBox(height: 4),
+                        SizedBox(height: 2),
                         Text(
                           'Dr. ${prescription.doctorName ?? 'Unknown'}',
                           style: TextStyle(
-                            fontSize: 14,
+                            fontSize: 13,
                             color: Colors.grey[600],
                           ),
                         ),
-                        SizedBox(height: 4),
+                        SizedBox(height: 2),
                         Text(
-                          '$formattedDate at $formattedTime',
+                          '${isPending ? 'Prescribed' : 'Completed'}: $formattedDate at $formattedTime',
                           style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey[600],
+                            fontSize: 12,
+                            color: Colors.grey[500],
                           ),
                         ),
                       ],
                     ),
                   ),
                   Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.1),
+                      color: statusColor.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: statusColor.withOpacity(0.3)),
                     ),
                     child: Text(
-                      'Pending',
+                      statusText,
                       style: TextStyle(
+                        fontSize: 10,
                         fontWeight: FontWeight.bold,
-                        color: Colors.orange,
+                        color: statusColor,
                       ),
                     ),
                   ),
                 ],
               ),
-              Divider(height: 24),
+              
+              SizedBox(height: 12),
               
               // Diagnosis and medications
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.medical_information,
-                    size: 18,
-                    color: Colors.grey[600],
-                  ),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Diagnosis:',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                            color: Colors.grey[700],
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          prescription.diagnosis,
-                          style: TextStyle(
-                            color: Colors.black87,
+                        Icon(Icons.medical_information, size: 16, color: Colors.grey[600]),
+                        SizedBox(width: 6),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Diagnosis:',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.grey[700],
+                                ),
+                              ),
+                              Text(
+                                prescription.diagnosis,
+                                style: TextStyle(fontSize: 13, color: Colors.black87),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
-                  ),
-                ],
-              ),
-              SizedBox(height: 12),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.medication,
-                    size: 18,
-                    color: Colors.grey[600],
-                  ),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
+                    SizedBox(height: 8),
+                    Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Medications:',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                            color: Colors.grey[700],
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          medicationPreview,
-                          style: TextStyle(
-                            color: Colors.black87,
+                        Icon(Icons.medication, size: 16, color: Colors.grey[600]),
+                        SizedBox(width: 6),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Medications (${prescription.medications.length}):',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.grey[700],
+                                ),
+                              ),
+                              Text(
+                                medicationPreview,
+                                style: TextStyle(fontSize: 13, color: Colors.black87),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               
-              SizedBox(height: 16),
-              
-              // Action buttons
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => PrescriptionView(
-                            prescription: prescription,
+              // Action button for pending prescriptions
+              if (isPending) ...[
+                SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => PrescriptionView(prescription: prescription),
                           ),
-                        ),
-                      ).then((_) => _loadPendingPrescriptions());
-                    },
-                    icon: Icon(Icons.remove_red_eye),
-                    label: Text('View Details'),
-                  ),
-                ],
-              ),
+                        ).then((_) => _loadData());
+                      },
+                      icon: Icon(Icons.visibility, size: 16),
+                      label: Text('Process'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: statusColor,
+                        side: BorderSide(color: statusColor),
+                        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
       ),
     );
+  }
+  
+  // Scan patient card for prescription lookup
+  void _scanPatientCard() {
+    // Navigate to the enhanced NFC scanner
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EnhancedNFCPatientScanner(
+          userRole: 'pharmacist',
+          userId: 'pharmacist1', // Get from auth service
+          userName: 'Pharmacist', // Get from auth service
+        ),
+      ),
+    ).then((_) => _loadData());
   }
 }

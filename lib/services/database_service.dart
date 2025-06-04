@@ -21,13 +21,9 @@ class DatabaseService {
   final CollectionReference appointmentsCollection = 
       FirebaseFirestore.instance.collection('appointments');
 
-  // Fixed room and doctor data
-  static const List<String> availableRooms = ['Room 1', 'Room 2', 'Room 3'];
-  
-  static const List<Map<String, String>> availableDoctors = [
-    {'id': 'doctor1', 'name': 'Dr. Ahmad Rahman', 'specialization': 'General Medicine'},
-    {'id': 'doctor2', 'name': 'Dr. Siti Aminah', 'specialization': 'Pediatrics'},
-    {'id': 'doctor3', 'name': 'Dr. Kumar Raj', 'specialization': 'Cardiology'},
+  // Fixed room data (you can make this dynamic later if needed)
+  static const List<String> availableRooms = [
+    'Room 1', 'Room 2', 'Room 3', 'Room 4', 'Room 5'
   ];
 
   // Get available rooms
@@ -35,26 +31,22 @@ class DatabaseService {
     return availableRooms;
   }
 
-  // Get available doctors
-  List<Map<String, String>> getAvailableDoctors() {
-    return availableDoctors;
-  }
-
-  // Initialize default doctors in Firestore (call this once during setup)
-  Future<void> initializeDefaultDoctors() async {
+  // Get available doctors from Firestore (DYNAMIC)
+  Future<List<Map<String, String>>> getAvailableDoctors() async {
     try {
-      for (var doctor in availableDoctors) {
-        await doctorsCollection.doc(doctor['id']).set({
-          'userId': doctor['id'],
-          'name': doctor['name'],
-          'email': '${doctor['id']}@hospital.com',
-          'specialization': doctor['specialization'],
-          'department': 'General',
-          'createdAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-      }
+      final snapshot = await doctorsCollection.get();
+      
+      return snapshot.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        return {
+          'id': doc.id, // Use Firebase document ID
+          'name': data['name']?.toString() ?? 'Unknown Doctor',
+          'specialization': data['specialization']?.toString() ?? 'General Medicine',
+        };
+      }).toList();
     } catch (e) {
-      print('Error initializing doctors: $e');
+      print('Error getting doctors: ${e.toString()}');
+      return []; // Return empty list if error
     }
   }
   
@@ -145,6 +137,7 @@ class DatabaseService {
         'currentAppointment': null,
         'assignedDoctor': null,
         'assignedRoom': null,
+        'status': 'registered', // registered, active, completed
       };
       
       // Save to database
@@ -227,14 +220,15 @@ class DatabaseService {
     String? appointmentNotes,
   }) async {
     try {
-      // Validate room and doctor
+      // Validate room
       if (!availableRooms.contains(roomNumber)) {
         throw Exception('Invalid room number. Available rooms: ${availableRooms.join(", ")}');
       }
       
-      final doctorExists = availableDoctors.any((doc) => doc['id'] == doctorId);
-      if (!doctorExists) {
-        throw Exception('Invalid doctor ID');
+      // Validate doctor exists
+      final doctorData = await getDoctorById(doctorId);
+      if (doctorData == null) {
+        throw Exception('Invalid doctor ID: Doctor not found');
       }
       
       // Create appointment
@@ -256,6 +250,7 @@ class DatabaseService {
         'currentAppointment': appointmentId,
         'assignedDoctor': doctorId,
         'assignedRoom': roomNumber,
+        'status': 'active', // Change status to active when assigned
         'lastUpdated': FieldValue.serverTimestamp(),
       });
       
@@ -266,19 +261,10 @@ class DatabaseService {
     }
   }
   
-  // Get all doctors (return the fixed list)
-  Future<List<Map<String, dynamic>>> getAllDoctors() async {
-    return availableDoctors.map((doc) => {
-      'userId': doc['id'],
-      'name': doc['name'],
-      'specialization': doc['specialization'],
-      'department': 'General',
-    }).toList();
-  }
-  
-  // Get patients assigned to a specific doctor
+  // Get patients assigned to a specific doctor (only active ones)
   Future<List<Map<String, dynamic>>> getPatientsByDoctor(String doctorId) async {
     try {
+      // Simple query first
       final snapshot = await patientsCollection
           .where('assignedDoctor', isEqualTo: doctorId)
           .get();
@@ -288,25 +274,39 @@ class DatabaseService {
       for (var patientDoc in snapshot.docs) {
         final patientData = patientDoc.data() as Map<String, dynamic>;
         
-        // Get appointment details if available
-        if (patientData['currentAppointment'] != null) {
-          final appointmentDoc = await appointmentsCollection
-              .doc(patientData['currentAppointment'])
-              .get();
-          
-          if (appointmentDoc.exists) {
-            final appointmentData = appointmentDoc.data() as Map<String, dynamic>;
-            patientData['roomNumber'] = appointmentData['roomNumber'];
+        // Filter completed patients in memory
+        if (patientData['status'] != 'completed') {
+          // Get appointment details if available
+          if (patientData['currentAppointment'] != null) {
+            try {
+              final appointmentDoc = await appointmentsCollection
+                  .doc(patientData['currentAppointment'])
+                  .get();
+              
+              if (appointmentDoc.exists) {
+                final appointmentData = appointmentDoc.data() as Map<String, dynamic>;
+                patientData['roomNumber'] = appointmentData['roomNumber'];
+              }
+            } catch (e) {
+              print('Error loading appointment for patient: $e');
+            }
           }
+          
+          patients.add(patientData);
         }
-        
-        patients.add(patientData);
       }
+      
+      // Sort in memory
+      patients.sort((a, b) {
+        final aUpdated = (a['lastUpdated'] as Timestamp?)?.toDate() ?? DateTime.now();
+        final bUpdated = (b['lastUpdated'] as Timestamp?)?.toDate() ?? DateTime.now();
+        return bUpdated.compareTo(aUpdated);
+      });
       
       return patients;
     } catch (e) {
       print('Error getting patients by doctor: ${e.toString()}');
-      rethrow;
+      return [];
     }
   }
   
@@ -322,23 +322,20 @@ class DatabaseService {
       // Generate prescription ID
       final prescriptionId = prescriptionsCollection.doc().id;
       
-      // Get patient and doctor names for reference
+      // Get patient and doctor names
       final patientData = await getPatientById(patientId);
-      final doctorData = availableDoctors.firstWhere(
-        (doc) => doc['id'] == doctorId,
-        orElse: () => {'name': 'Unknown Doctor'},
-      );
+      final doctorData = await getDoctorById(doctorId);
       
       await prescriptionsCollection.doc(prescriptionId).set({
         'prescriptionId': prescriptionId,
         'patientId': patientId,
         'doctorId': doctorId,
         'patientName': patientData?['name'],
-        'doctorName': doctorData['name'],
+        'doctorName': doctorData?['name'] ?? 'Unknown Doctor',
         'medications': medications,
         'diagnosis': diagnosis,
         'notes': notes,
-        'status': 'pending', // pending, dispensed, completed
+        'status': 'pending',
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -353,15 +350,24 @@ class DatabaseService {
   // Get prescriptions by patient ID
   Future<List<Map<String, dynamic>>> getPrescriptionsByPatient(String patientId) async {
     try {
+      // Simple query without complex ordering to avoid index issues
       final snapshot = await prescriptionsCollection
           .where('patientId', isEqualTo: patientId)
-          .orderBy('createdAt', descending: true)
-          .get();
+          .get(); // Remove orderBy temporarily
       
-      return snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+      final prescriptions = snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+      
+      // Sort in memory instead of using Firestore orderBy
+      prescriptions.sort((a, b) {
+        final aCreated = (a['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+        final bCreated = (b['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+        return bCreated.compareTo(aCreated); // Newest first
+      });
+      
+      return prescriptions;
     } catch (e) {
       print('Error getting prescriptions by patient: ${e.toString()}');
-      rethrow;
+      return []; // Return empty list instead of throwing error
     }
   }
   
@@ -370,56 +376,274 @@ class DatabaseService {
     try {
       final snapshot = await prescriptionsCollection
           .where('status', isEqualTo: 'pending')
-          .orderBy('createdAt')
           .get();
       
-      return snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+      final prescriptions = snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+      
+      // Sort in memory - oldest first for pending
+      prescriptions.sort((a, b) {
+        final aCreated = (a['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+        final bCreated = (b['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+        return aCreated.compareTo(bCreated); // Oldest first
+      });
+      
+      return prescriptions;
     } catch (e) {
       print('Error getting pending prescriptions: ${e.toString()}');
-      rethrow;
+      return [];
     }
   }
   
-  // Update prescription status
+  // Update prescription status and handle completion flow
   Future<void> updatePrescriptionStatus(String prescriptionId, String status) async {
     try {
       await prescriptionsCollection.doc(prescriptionId).update({
         'status': status,
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      
+      // If prescription is completed, check if patient should be moved to completed
+      if (status == 'completed') {
+        await _checkAndMovePatientToCompleted(prescriptionId);
+      }
+      
+      print('Prescription status updated: $prescriptionId -> $status');
     } catch (e) {
       print('Error updating prescription status: ${e.toString()}');
       rethrow;
     }
   }
   
-  // Get all new patients for nurse assignment
-  Future<List<Map<String, dynamic>>> getNewPatients() async {
+  // Check if patient should be moved to completed status
+  Future<void> _checkAndMovePatientToCompleted(String prescriptionId) async {
     try {
-      final snapshot = await patientsCollection
-          .where('currentAppointment', isNull: true)
-          .orderBy('registrationDate', descending: true)
+      // Get the prescription to find patient ID
+      final prescriptionDoc = await prescriptionsCollection.doc(prescriptionId).get();
+      if (!prescriptionDoc.exists) return;
+      
+      final prescriptionData = prescriptionDoc.data() as Map<String, dynamic>;
+      final patientId = prescriptionData['patientId'];
+      
+      // Check if patient has any pending or dispensed prescriptions
+      final activePrescriptionsSnapshot = await prescriptionsCollection
+          .where('patientId', isEqualTo: patientId)
           .get();
       
-      return snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+      // Filter active prescriptions in memory
+      final activePrescriptions = activePrescriptionsSnapshot.docs
+          .where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final status = data['status'];
+            return status == 'pending' || status == 'dispensed';
+          })
+          .toList();
+      
+      // If no active prescriptions, mark patient as completed
+      if (activePrescriptions.isEmpty) {
+        await _markPatientAsCompleted(patientId);
+      }
+      
     } catch (e) {
-      print('Error getting new patients: ${e.toString()}');
-      rethrow;
+      print('Error checking patient completion status: ${e.toString()}');
     }
   }
   
-  // Get all assigned patients
-  Future<List<Map<String, dynamic>>> getAllAssignedPatients() async {
+  // Mark patient as completed (remove from active assignments)
+  Future<void> _markPatientAsCompleted(String patientId) async {
+    try {
+      // Update patient record
+      await patientsCollection.doc(patientId).update({
+        'status': 'completed', // Change status to completed
+        'completedAt': FieldValue.serverTimestamp(),
+        'lastUpdated': FieldValue.serverTimestamp(),
+        // Keep assignment info for records but mark as completed
+      });
+      
+      // Update appointment status if exists
+      final patientDoc = await patientsCollection.doc(patientId).get();
+      if (patientDoc.exists) {
+        final patientData = patientDoc.data() as Map<String, dynamic>;
+        final appointmentId = patientData['currentAppointment'];
+        
+        if (appointmentId != null) {
+          await appointmentsCollection.doc(appointmentId).update({
+            'status': 'completed',
+            'completedAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+      
+      print('Patient marked as completed: $patientId');
+    } catch (e) {
+      print('Error marking patient as completed: ${e.toString()}');
+    }
+  }
+  
+  // Get patients by status for different views
+  Future<List<Map<String, dynamic>>> getPatientsByStatus(String status) async {
+    try {
+      QuerySnapshot snapshot;
+      
+      if (status == 'active') {
+        // Active patients: assigned but not completed
+        snapshot = await patientsCollection
+            .where('status', isEqualTo: 'active')
+            .get();
+      } else if (status == 'completed') {
+        // Completed patients
+        snapshot = await patientsCollection
+            .where('status', isEqualTo: 'completed')
+            .get();
+      } else if (status == 'registered') {
+        // Newly registered, not assigned yet
+        snapshot = await patientsCollection
+            .where('status', isEqualTo: 'registered')
+            .get();
+      } else {
+        // Default: all patients
+        snapshot = await patientsCollection.get();
+      }
+      
+      List<Map<String, dynamic>> patients = [];
+      
+      for (var doc in snapshot.docs) {
+        final patientData = doc.data() as Map<String, dynamic>;
+        
+        // Add appointment details if available
+        if (patientData['currentAppointment'] != null) {
+          try {
+            final appointmentDoc = await appointmentsCollection
+                .doc(patientData['currentAppointment'])
+                .get();
+            
+            if (appointmentDoc.exists) {
+              final appointmentData = appointmentDoc.data() as Map<String, dynamic>;
+              patientData['roomNumber'] = appointmentData['roomNumber'];
+              patientData['appointmentStatus'] = appointmentData['status'];
+            }
+          } catch (e) {
+            print('Error loading appointment for patient: $e');
+          }
+        }
+        
+        patients.add(patientData);
+      }
+      
+      // Sort in memory
+      patients.sort((a, b) {
+        Timestamp? aTime;
+        Timestamp? bTime;
+        
+        if (status == 'completed') {
+          aTime = a['completedAt'] as Timestamp?;
+          bTime = b['completedAt'] as Timestamp?;
+        } else {
+          aTime = a['lastUpdated'] as Timestamp? ?? a['registrationDate'] as Timestamp?;
+          bTime = b['lastUpdated'] as Timestamp? ?? b['registrationDate'] as Timestamp?;
+        }
+        
+        final aDate = aTime?.toDate() ?? DateTime.now();
+        final bDate = bTime?.toDate() ?? DateTime.now();
+        return bDate.compareTo(aDate); // Newest first
+      });
+      
+      return patients;
+    } catch (e) {
+      print('Error getting patients by status: ${e.toString()}');
+      return [];
+    }
+  }
+  
+  // Get all new patients for nurse assignment (registered but not assigned)
+  Future<List<Map<String, dynamic>>> getNewPatients() async {
     try {
       final snapshot = await patientsCollection
-          .where('currentAppointment', isNotEqualTo: null)
-          .orderBy('lastUpdated', descending: true)
+          .where('status', isEqualTo: 'registered')
           .get();
       
-      return snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+      final patients = snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+      
+      // Sort in memory
+      patients.sort((a, b) {
+        final aDate = (a['registrationDate'] as Timestamp?)?.toDate() ?? DateTime.now();
+        final bDate = (b['registrationDate'] as Timestamp?)?.toDate() ?? DateTime.now();
+        return bDate.compareTo(aDate); // Newest first
+      });
+      
+      return patients;
+    } catch (e) {
+      print('Error getting new patients: ${e.toString()}');
+      return [];
+    }
+  }
+  
+  // Get all assigned patients (active)
+  Future<List<Map<String, dynamic>>> getAllAssignedPatients() async {
+    try {
+      return await getPatientsByStatus('active');
     } catch (e) {
       print('Error getting assigned patients: ${e.toString()}');
-      rethrow;
+      return [];
+    }
+  }
+  
+  // Get completed prescriptions for tracking
+  Future<List<Map<String, dynamic>>> getCompletedPrescriptions({int? limit}) async {
+    try {
+      final snapshot = await prescriptionsCollection
+          .where('status', isEqualTo: 'completed')
+          .get();
+      
+      final prescriptions = snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+      
+      // Sort in memory - newest first
+      prescriptions.sort((a, b) {
+        final aUpdated = (a['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+        final bUpdated = (b['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+        return bUpdated.compareTo(aUpdated);
+      });
+      
+      // Apply limit if specified
+      if (limit != null && prescriptions.length > limit) {
+        return prescriptions.take(limit).toList();
+      }
+      
+      return prescriptions;
+    } catch (e) {
+      print('Error getting completed prescriptions: ${e.toString()}');
+      return [];
+    }
+  }
+  
+  // Get prescriptions by status for pharmacist
+  Future<List<Map<String, dynamic>>> getPrescriptionsByStatus(String status) async {
+    try {
+      final snapshot = await prescriptionsCollection
+          .where('status', isEqualTo: status)
+          .get();
+      
+      final prescriptions = snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+      
+      // Sort in memory
+      prescriptions.sort((a, b) {
+        if (status == 'pending') {
+          // Oldest first for pending
+          final aCreated = (a['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+          final bCreated = (b['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+          return aCreated.compareTo(bCreated);
+        } else {
+          // Newest first for completed/dispensed
+          final aUpdated = (a['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+          final bUpdated = (b['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+          return bUpdated.compareTo(aUpdated);
+        }
+      });
+      
+      return prescriptions;
+    } catch (e) {
+      print('Error getting prescriptions by status: ${e.toString()}');
+      return [];
     }
   }
 
@@ -439,27 +663,115 @@ class DatabaseService {
     }
   }
 
-  // Get doctor by ID
+  // Get doctor by ID from Firestore
   Future<Map<String, dynamic>?> getDoctorById(String doctorId) async {
     try {
-      final doctor = availableDoctors.firstWhere(
-        (doc) => doc['id'] == doctorId,
-        orElse: () => {},
-      );
+      final doc = await doctorsCollection.doc(doctorId).get();
       
-      if (doctor.isNotEmpty) {
-        return {
-          'userId': doctor['id'],
-          'name': doctor['name'],
-          'specialization': doctor['specialization'],
-          'department': 'General',
-        };
+      if (doc.exists) {
+        return doc.data() as Map<String, dynamic>;
       }
       
       return null;
     } catch (e) {
       print('Error getting doctor by ID: ${e.toString()}');
       return null;
+    }
+  }
+  
+  // Get patient statistics for dashboard
+  Future<Map<String, int>> getPatientStatistics() async {
+    try {
+      // Get all patients
+      final allPatientsSnapshot = await patientsCollection.get();
+      final totalPatients = allPatientsSnapshot.docs.length;
+      
+      // Count by status in memory to avoid complex queries
+      int activePatients = 0;
+      int completedPatients = 0;
+      int unassignedPatients = 0;
+      
+      for (var doc in allPatientsSnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final status = data['status'];
+        
+        switch (status) {
+          case 'active':
+            activePatients++;
+            break;
+          case 'completed':
+            completedPatients++;
+            break;
+          case 'registered':
+            unassignedPatients++;
+            break;
+        }
+      }
+      
+      return {
+        'total': totalPatients,
+        'active': activePatients,
+        'completed': completedPatients,
+        'unassigned': unassignedPatients,
+      };
+    } catch (e) {
+      print('Error getting patient statistics: ${e.toString()}');
+      return {
+        'total': 0,
+        'active': 0,
+        'completed': 0,
+        'unassigned': 0,
+      };
+    }
+  }
+  
+  // Get prescription statistics for pharmacist dashboard
+  Future<Map<String, int>> getPrescriptionStatistics() async {
+    try {
+      // Get all prescriptions
+      final allPrescriptionsSnapshot = await prescriptionsCollection.get();
+      
+      // Count by status in memory
+      int pendingCount = 0;
+      int dispensedCount = 0;
+      int completedTodayCount = 0;
+      
+      final today = DateTime.now();
+      final startOfDay = DateTime(today.year, today.month, today.day);
+      
+      for (var doc in allPrescriptionsSnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final status = data['status'];
+        
+        switch (status) {
+          case 'pending':
+            pendingCount++;
+            break;
+          case 'dispensed':
+            dispensedCount++;
+            break;
+          case 'completed':
+            // Check if completed today
+            final updatedAt = (data['updatedAt'] as Timestamp?)?.toDate();
+            if (updatedAt != null && updatedAt.isAfter(startOfDay)) {
+              completedTodayCount++;
+            }
+            break;
+        }
+      }
+      
+      return {
+        'pending': pendingCount,
+        'dispensed': dispensedCount,
+        'completedToday': completedTodayCount,
+      };
+    } catch (e) {
+      print('Error getting prescription statistics: ${e.toString()}');
+      return {
+        'pending': 0,
+        'dispensed': 0,
+        'completedToday': 0,
+      };
     }
   }
 }

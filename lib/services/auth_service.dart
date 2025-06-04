@@ -54,14 +54,19 @@ class AuthService with ChangeNotifier {
           'createdAt': FieldValue.serverTimestamp(),
         });
         
-        // For non-patient roles, create role-specific document
-        if (role != 'patient') {
-          await _firestore.collection(role + 's').doc(user.uid).set({
-            'userId': user.uid,
-            'email': email,
-            'name': name,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
+        // If it's a doctor, create doctor profile
+        if (role == 'doctor') {
+          await _createDoctorProfile(user.uid, name, email);
+        }
+        
+        // If it's a nurse, create nurse profile
+        if (role == 'nurse') {
+          await _createNurseProfile(user.uid, name, email);
+        }
+        
+        // If it's a pharmacist, create pharmacist profile
+        if (role == 'pharmacist') {
+          await _createPharmacistProfile(user.uid, name, email);
         }
         
         notifyListeners();
@@ -74,15 +79,76 @@ class AuthService with ChangeNotifier {
     }
   }
   
+  // Create doctor profile when doctor registers
+  Future<void> _createDoctorProfile(String userId, String name, String email) async {
+    try {
+      await _firestore.collection('doctors').doc(userId).set({
+        'userId': userId,
+        'name': name,
+        'email': email,
+        'specialization': 'General Medicine', // Default, can be updated later
+        'department': 'General',
+        'phone': null,
+        'photoUrl': null,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      print('Doctor profile created for: $userId');
+    } catch (e) {
+      print('Error creating doctor profile: ${e.toString()}');
+      rethrow;
+    }
+  }
+  
+  // Create nurse profile when nurse registers
+  Future<void> _createNurseProfile(String userId, String name, String email) async {
+    try {
+      await _firestore.collection('nurses').doc(userId).set({
+        'userId': userId,
+        'name': name,
+        'email': email,
+        'department': 'General',
+        'phone': null,
+        'photoUrl': null,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      print('Nurse profile created for: $userId');
+    } catch (e) {
+      print('Error creating nurse profile: ${e.toString()}');
+      rethrow;
+    }
+  }
+  
+  // Create pharmacist profile when pharmacist registers
+  Future<void> _createPharmacistProfile(String userId, String name, String email) async {
+    try {
+      await _firestore.collection('pharmacists').doc(userId).set({
+        'userId': userId,
+        'name': name,
+        'email': email,
+        'department': 'Pharmacy',
+        'phone': null,
+        'photoUrl': null,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      print('Pharmacist profile created for: $userId');
+    } catch (e) {
+      print('Error creating pharmacist profile: ${e.toString()}');
+      rethrow;
+    }
+  }
+  
   // Sign out
   Future<void> signOut() async {
     await _auth.signOut();
     notifyListeners();
   }
   
-  // Get user role from Firestore
+  // Get user role from Firestore - SIMPLIFIED and SAFE
   Future<String> getUserRole() async {
-    if (currentUser == null) return 'patient'; // Default role
+    if (currentUser == null) return 'patient';
     
     try {
       // First check if user is a patient by email
@@ -91,41 +157,25 @@ class AuthService with ChangeNotifier {
         return 'patient';
       }
       
-      // Check if user is a doctor by email mapping
-      final doctorId = _mapEmailToDoctorId(currentUser!.email!);
-      if (doctorId != null) {
-        return 'doctor';
-      }
-      
-      // Check in users collection for other roles
+      // Check in users collection for role
       final doc = await _firestore.collection('users').doc(currentUser!.uid).get();
       
-      if (doc.exists) {
-        return doc.data()?['role'] ?? 'patient';
+      if (doc.exists && doc.data() != null) {
+        final userData = doc.data()!;
+        final role = userData['role'];
+        if (role != null && role is String) {
+          return role;
+        }
       }
       
-      return 'patient'; // Default role if no document
+      return 'patient'; // Default role if nothing found
     } catch (e) {
       print('Error getting user role: ${e.toString()}');
-      return 'patient'; // Default role on error
+      return 'patient'; // Safe default
     }
   }
   
-  // Map email to doctor ID - this should match your doctor system
-  String? _mapEmailToDoctorId(String email) {
-    switch (email) {
-      case 'doctor1@hospital.com':
-        return 'doctor1';
-      case 'doctor2@hospital.com':
-        return 'doctor2';
-      case 'doctor3@hospital.com':
-        return 'doctor3';
-      default:
-        return null;
-    }
-  }
-  
-  // Get current user ID - for patients, use their IC number; for doctors, use mapped ID
+  // Get current user ID - SIMPLIFIED and SAFE
   Future<String?> getCurrentUserId() async {
     if (currentUser == null) return null;
     
@@ -133,30 +183,27 @@ class AuthService with ChangeNotifier {
       final role = await getUserRole();
       
       if (role == 'patient') {
-        // For patients, get their IC number (patientId) from the database
+        // For patients, get their IC number from database
         final patientData = await _databaseService.getPatientByEmail(currentUser!.email!);
         return patientData?['patientId']; // This is their IC number
-      } else if (role == 'doctor') {
-        // For doctors, use mapped doctor ID
-        return _mapEmailToDoctorId(currentUser!.email!);
       } else {
-        // For other roles, use Firebase Auth UID
+        // For doctors, nurses, pharmacists - use Firebase UID
         return currentUser!.uid;
       }
     } catch (e) {
       print('Error getting current user ID: ${e.toString()}');
-      return currentUser!.uid; // Fallback to Auth UID
+      return currentUser!.uid; // Fallback to Firebase UID
     }
   }
   
-  // Get current doctor ID (specifically for doctors)
+  // Get current doctor ID (for doctors only)
   Future<String?> getCurrentDoctorId() async {
     if (currentUser == null) return null;
     
     try {
       final role = await getUserRole();
       if (role == 'doctor') {
-        return _mapEmailToDoctorId(currentUser!.email!);
+        return currentUser!.uid; // Use Firebase UID as doctor ID
       }
       return null;
     } catch (e) {
@@ -188,16 +235,6 @@ class AuthService with ChangeNotifier {
             'lastUpdated': FieldValue.serverTimestamp(),
           });
         }
-      } else if (role == 'doctor') {
-        // For doctors, update in the doctors collection using mapped ID
-        final doctorId = _mapEmailToDoctorId(currentUser!.email!);
-        if (doctorId != null) {
-          await _firestore.collection('doctors').doc(doctorId).update({
-            'name': name,
-            if (photoUrl != null) 'photoUrl': photoUrl,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-        }
       } else {
         // Update in users collection
         await _firestore.collection('users').doc(currentUser!.uid).update({
@@ -207,11 +244,25 @@ class AuthService with ChangeNotifier {
         });
         
         // Update in role-specific collection
-        await _firestore.collection(role + 's').doc(currentUser!.uid).update({
-          'name': name,
-          if (photoUrl != null) 'photoUrl': photoUrl,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+        if (role == 'doctor') {
+          await _firestore.collection('doctors').doc(currentUser!.uid).update({
+            'name': name,
+            if (photoUrl != null) 'photoUrl': photoUrl,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } else if (role == 'nurse') {
+          await _firestore.collection('nurses').doc(currentUser!.uid).update({
+            'name': name,
+            if (photoUrl != null) 'photoUrl': photoUrl,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } else if (role == 'pharmacist') {
+          await _firestore.collection('pharmacists').doc(currentUser!.uid).update({
+            'name': name,
+            if (photoUrl != null) 'photoUrl': photoUrl,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
       }
       
       notifyListeners();
@@ -223,99 +274,10 @@ class AuthService with ChangeNotifier {
   
   // Reset password
   Future<void> resetPassword(String email) async {
-    await _auth.sendPasswordResetEmail(email: email);
-  }
-  
-  // Initialize default doctors and create their auth accounts
-  Future<void> initializeDefaultData() async {
     try {
-      await _databaseService.initializeDefaultDoctors();
-      
-      // Create default doctor accounts if they don't exist
-      await _createDefaultDoctorAccounts();
+      await _auth.sendPasswordResetEmail(email: email);
     } catch (e) {
-      print('Error initializing default data: ${e.toString()}');
-    }
-  }
-  
-  // Create default doctor accounts for testing
-  Future<void> _createDefaultDoctorAccounts() async {
-    final defaultDoctors = [
-      {
-        'email': 'doctor1@hospital.com',
-        'password': 'doctor123',
-        'name': 'Dr. Ahmad Rahman',
-        'role': 'doctor',
-      },
-      {
-        'email': 'doctor2@hospital.com',
-        'password': 'doctor123',
-        'name': 'Dr. Siti Aminah',
-        'role': 'doctor',
-      },
-      {
-        'email': 'doctor3@hospital.com',
-        'password': 'doctor123',
-        'name': 'Dr. Kumar Raj',
-        'role': 'doctor',
-      },
-    ];
-    
-    for (final doctorInfo in defaultDoctors) {
-      try {
-        // Check if doctor account already exists
-        final existingUser = await _checkUserExists(doctorInfo['email']!);
-        
-        if (!existingUser) {
-          // Create the doctor account
-          await _createDoctorAccount(
-            doctorInfo['email']!,
-            doctorInfo['password']!,
-            doctorInfo['name']!,
-          );
-          print('Created default doctor account: ${doctorInfo['email']}');
-        }
-      } catch (e) {
-        print('Error creating doctor account ${doctorInfo['email']}: $e');
-        // Continue with next doctor even if one fails
-      }
-    }
-  }
-  
-  // Check if user exists
-  Future<bool> _checkUserExists(String email) async {
-    try {
-      final methods = await _auth.fetchSignInMethodsForEmail(email);
-      return methods.isNotEmpty;
-    } catch (e) {
-      return false;
-    }
-  }
-  
-  // Create a doctor account
-  Future<void> _createDoctorAccount(String email, String password, String name) async {
-    try {
-      final userCredential = await _auth.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
-      
-      if (userCredential.user != null) {
-        // Create user document
-        await _firestore.collection('users').doc(userCredential.user!.uid).set({
-          'email': email,
-          'name': name,
-          'role': 'doctor',
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-        
-        // Update display name
-        await userCredential.user!.updateDisplayName(name);
-        
-        print('Successfully created doctor account: $email');
-      }
-    } catch (e) {
-      print('Error creating doctor account: $e');
+      print('Error sending password reset email: ${e.toString()}');
       rethrow;
     }
   }
@@ -323,14 +285,79 @@ class AuthService with ChangeNotifier {
   // Get doctor information for UI display
   Future<Map<String, dynamic>?> getCurrentDoctorInfo() async {
     try {
-      final doctorId = await getCurrentDoctorId();
-      if (doctorId != null) {
-        return await _databaseService.getDoctorById(doctorId);
+      final role = await getUserRole();
+      if (role == 'doctor' && currentUser != null) {
+        return await _databaseService.getDoctorById(currentUser!.uid);
       }
       return null;
     } catch (e) {
       print('Error getting doctor info: ${e.toString()}');
       return null;
+    }
+  }
+  
+  // Get nurse information for UI display
+  Future<Map<String, dynamic>?> getCurrentNurseInfo() async {
+    try {
+      final role = await getUserRole();
+      if (role == 'nurse' && currentUser != null) {
+        final doc = await _firestore.collection('nurses').doc(currentUser!.uid).get();
+        if (doc.exists) {
+          return doc.data() as Map<String, dynamic>;
+        }
+      }
+      return null;
+    } catch (e) {
+      print('Error getting nurse info: ${e.toString()}');
+      return null;
+    }
+  }
+  
+  // Get pharmacist information for UI display
+  Future<Map<String, dynamic>?> getCurrentPharmacistInfo() async {
+    try {
+      final role = await getUserRole();
+      if (role == 'pharmacist' && currentUser != null) {
+        final doc = await _firestore.collection('pharmacists').doc(currentUser!.uid).get();
+        if (doc.exists) {
+          return doc.data() as Map<String, dynamic>;
+        }
+      }
+      return null;
+    } catch (e) {
+      print('Error getting pharmacist info: ${e.toString()}');
+      return null;
+    }
+  }
+  
+  // Check if user exists (for duplicate email prevention)
+  Future<bool> checkUserExists(String email) async {
+    try {
+      final methods = await _auth.fetchSignInMethodsForEmail(email);
+      return methods.isNotEmpty;
+    } catch (e) {
+      print('Error checking if user exists: ${e.toString()}');
+      return false;
+    }
+  }
+  
+  // Update doctor specialization (for doctors to update their profile)
+  Future<void> updateDoctorSpecialization(String specialization, String department) async {
+    if (currentUser == null) return;
+    
+    try {
+      final role = await getUserRole();
+      if (role == 'doctor') {
+        await _firestore.collection('doctors').doc(currentUser!.uid).update({
+          'specialization': specialization,
+          'department': department,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        notifyListeners();
+      }
+    } catch (e) {
+      print('Error updating doctor specialization: ${e.toString()}');
+      rethrow;
     }
   }
 }

@@ -26,11 +26,40 @@ class _AssignDoctorScreenState extends State<AssignDoctorScreen> {
   
   bool _isSubmitting = false;
   String _errorMessage = '';
+  bool _isLoadingDoctors = true;
+  List<Map<String, String>> _availableDoctors = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDoctors();
+  }
 
   @override
   void dispose() {
     _notesController.dispose();
     super.dispose();
+  }
+
+  // Load doctors from database
+  Future<void> _loadDoctors() async {
+    setState(() {
+      _isLoadingDoctors = true;
+      _errorMessage = '';
+    });
+
+    try {
+      final doctors = await _databaseService.getAvailableDoctors();
+      setState(() {
+        _availableDoctors = doctors;
+        _isLoadingDoctors = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Error loading doctors: ${e.toString()}';
+        _isLoadingDoctors = false;
+      });
+    }
   }
 
   // Assign doctor and room to patient
@@ -97,12 +126,19 @@ class _AssignDoctorScreenState extends State<AssignDoctorScreen> {
   @override
   Widget build(BuildContext context) {
     final availableRooms = _databaseService.getAvailableRooms();
-    final availableDoctors = _databaseService.getAvailableDoctors();
 
     return Scaffold(
       appBar: AppBar(
         title: Text('Assign Doctor & Room', style: TextStyle(color: Colors.white)),
         centerTitle: true,
+        backgroundColor: Theme.of(context).primaryColor,
+        actions: [
+          IconButton(
+            icon: Icon(Icons.refresh),
+            onPressed: _loadDoctors,
+            tooltip: 'Refresh Doctors',
+          ),
+        ],
       ),
       body: Form(
         key: _formKey,
@@ -201,8 +237,98 @@ class _AssignDoctorScreenState extends State<AssignDoctorScreen> {
             Divider(),
             SizedBox(height: 8),
 
-            // List of doctors with radio buttons
-            ...availableDoctors.map((doctor) => _buildDoctorSelectionTile(doctor)),
+            // Dynamic doctor list
+            if (_isLoadingDoctors)
+              Container(
+                padding: EdgeInsets.all(20),
+                child: Center(
+                  child: Column(
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 12),
+                      Text('Loading doctors...'),
+                    ],
+                  ),
+                ),
+              )
+            else if (_errorMessage.isNotEmpty && _availableDoctors.isEmpty)
+              Container(
+                padding: EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.error, color: Colors.red),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _errorMessage,
+                            style: TextStyle(color: Colors.red[800]),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      onPressed: _loadDoctors,
+                      icon: Icon(Icons.refresh),
+                      label: Text('Try Again'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else if (_availableDoctors.isEmpty)
+              Container(
+                padding: EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange),
+                ),
+                child: Column(
+                  children: [
+                    Icon(Icons.person_search, size: 48, color: Colors.orange),
+                    SizedBox(height: 12),
+                    Text(
+                      'No doctors available',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange[800],
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      'Please contact admin to register doctors first',
+                      style: TextStyle(color: Colors.orange[700]),
+                      textAlign: TextAlign.center,
+                    ),
+                    SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _loadDoctors,
+                      icon: Icon(Icons.refresh),
+                      label: Text('Check Again'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.orange,
+                        side: BorderSide(color: Colors.orange),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              // List of doctors with radio buttons
+              Column(
+                children: _availableDoctors.map((doctor) => _buildDoctorSelectionTile(doctor)).toList(),
+              ),
 
             SizedBox(height: 24),
 
@@ -218,7 +344,7 @@ class _AssignDoctorScreenState extends State<AssignDoctorScreen> {
             Divider(),
             SizedBox(height: 8),
 
-            // Room selection buttons
+            // Room selection chips
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -234,6 +360,10 @@ class _AssignDoctorScreenState extends State<AssignDoctorScreen> {
                   },
                   selectedColor: Theme.of(context).primaryColor.withOpacity(0.2),
                   checkmarkColor: Theme.of(context).primaryColor,
+                  labelStyle: TextStyle(
+                    color: isSelected ? Theme.of(context).primaryColor : null,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  ),
                 );
               }).toList(),
             ),
@@ -250,14 +380,15 @@ class _AssignDoctorScreenState extends State<AssignDoctorScreen> {
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
+                helperText: 'Add any special notes or instructions for the appointment',
               ),
               maxLines: 3,
             ),
 
             SizedBox(height: 24),
 
-            // Error message
-            if (_errorMessage.isNotEmpty)
+            // Error message for assignment
+            if (_errorMessage.isNotEmpty && !_isLoadingDoctors && _availableDoctors.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 16),
                 child: Container(
@@ -287,7 +418,7 @@ class _AssignDoctorScreenState extends State<AssignDoctorScreen> {
 
             // Submit button
             ElevatedButton.icon(
-              onPressed: _isSubmitting ? null : _assignDoctorAndRoom,
+              onPressed: (_isSubmitting || _availableDoctors.isEmpty) ? null : _assignDoctorAndRoom,
               icon: _isSubmitting
                   ? SizedBox(
                       width: 20,
@@ -297,9 +428,11 @@ class _AssignDoctorScreenState extends State<AssignDoctorScreen> {
                         strokeWidth: 2,
                       ),
                     )
-                  : Icon(Icons.check),
-              label: Text('Assign Doctor & Room'),
+                  : Icon(Icons.assignment_ind),
+              label: Text(_isSubmitting ? 'Assigning...' : 'Assign Doctor & Room'),
               style: ElevatedButton.styleFrom(
+                backgroundColor: _availableDoctors.isEmpty ? Colors.grey : Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
                 padding: EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -341,7 +474,7 @@ class _AssignDoctorScreenState extends State<AssignDoctorScreen> {
                     ? Theme.of(context).primaryColor 
                     : Colors.grey[300],
                 child: Icon(
-                  Icons.local_hospital,
+                  Icons.medical_services,
                   color: isSelected ? Colors.white : Colors.grey[600],
                 ),
               ),
@@ -373,6 +506,7 @@ class _AssignDoctorScreenState extends State<AssignDoctorScreen> {
                 Icon(
                   Icons.check_circle,
                   color: Theme.of(context).primaryColor,
+                  size: 24,
                 ),
             ],
           ),

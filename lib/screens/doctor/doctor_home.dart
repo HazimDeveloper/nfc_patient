@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nfc_patient_registration/screens/common/enhance_nfc_patient_scanner.dart';
 import 'package:provider/provider.dart';
 import 'package:nfc_patient_registration/services/auth_service.dart';
 import 'package:nfc_patient_registration/services/database_service.dart';
@@ -26,49 +27,41 @@ class _DoctorHomeState extends State<DoctorHome> {
 
   // Initialize doctor and load patients
   Future<void> _initializeDoctor() async {
-    try {
-      final authService = Provider.of<AuthService>(context, listen: false);
-      final userEmail = authService.currentUser?.email;
+  try {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final currentUserId = authService.currentUser?.uid;
+    
+    if (currentUserId != null) {
+      _currentDoctorId = currentUserId; // Use Firebase UID as doctor ID
+      _doctorInfo = await _databaseService.getDoctorById(_currentDoctorId!);
       
-      if (userEmail != null) {
-        // Map email to doctor ID (you should store this mapping in your auth system)
-        _currentDoctorId = _mapEmailToDoctorId(userEmail);
-        _doctorInfo = await _databaseService.getDoctorById(_currentDoctorId!);
-        
-        if (_currentDoctorId != null) {
-          await _loadPatients();
-        } else {
-          setState(() {
-            _error = 'Unable to identify doctor profile';
-            _isLoading = false;
-          });
-        }
+      if (_doctorInfo != null) {
+        await _loadPatients();
       } else {
         setState(() {
-          _error = 'No user logged in';
+          _error = 'Doctor profile not found';
           _isLoading = false;
         });
       }
-    } catch (e) {
+    } else {
       setState(() {
-        _error = 'Error initializing: ${e.toString()}';
+        _error = 'No user logged in';
         _isLoading = false;
       });
     }
+  } catch (e) {
+    setState(() {
+      _error = 'Error initializing: ${e.toString()}';
+      _isLoading = false;
+    });
   }
+}
 
   // Map email to doctor ID (in real app, this should be stored in database)
   String? _mapEmailToDoctorId(String email) {
-    switch (email) {
-      case 'doctor1@hospital.com':
-        return 'doctor1';
-      case 'doctor2@hospital.com':
-        return 'doctor2';
-      case 'doctor3@hospital.com':
-        return 'doctor3';
-      default:
+   
         return null;
-    }
+    
   }
 
   // Load assigned patients
@@ -99,9 +92,10 @@ class _DoctorHomeState extends State<DoctorHome> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => DoctorNFCCardScanner(
-          doctorId: _currentDoctorId!,
-          doctorName: _doctorInfo?['name'] ?? 'Doctor',
+        builder: (context) => EnhancedNFCPatientScanner(
+          userRole: 'doctor',
+          userId: _currentDoctorId,
+          userName: _doctorInfo?['name'] ?? 'Doctor',
         ),
       ),
     ).then((_) => _loadPatients()); // Refresh patient list when returning

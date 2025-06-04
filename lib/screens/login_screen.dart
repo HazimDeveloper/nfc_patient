@@ -181,10 +181,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       items: [
                         DropdownMenuItem(
-                          value: 'patient',
-                          child: Text('Patient'),
-                        ),
-                        DropdownMenuItem(
                           value: 'doctor',
                           child: Text('Doctor'),
                         ),

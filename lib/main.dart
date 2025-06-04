@@ -75,7 +75,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   Future<void> _initializeApp() async {
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
-      await authService.initializeDefaultData();
+      await authService;
       
       setState(() {
         _initialized = true;
