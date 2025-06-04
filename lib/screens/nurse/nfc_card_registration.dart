@@ -212,6 +212,35 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
     }
   }
 
+  // Helper method to get doctor name
+  Future<String> _getDoctorName(String doctorId) async {
+    try {
+      final databaseService = DatabaseService();
+      final doctorData = await databaseService.getDoctorById(doctorId);
+      return doctorData?['name'] ?? 'Unknown Doctor';
+    } catch (e) {
+      return 'Unknown Doctor';
+    }
+  }
+
+  // Helper method to format dates
+  String _formatDate(dynamic timestamp) {
+    if (timestamp == null) return 'Not available';
+    
+    try {
+      DateTime date;
+      if (timestamp is DateTime) {
+        date = timestamp;
+      } else {
+        date = timestamp.toDate();
+      }
+      
+      return '${date.day}/${date.month}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    } catch (e) {
+      return 'Invalid date';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -261,7 +290,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                       ),
                       SizedBox(height: 8),
                       Text(
-                        'Simple NFC Card Registration',
+                        'NFC Card Registration',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -423,58 +452,274 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                         ),
                         SizedBox(height: 8),
                         
-                        if (_existingPatientData != null) ...[
-                          // Show patient info
-                          Text(
-                            'Patient: ${_existingPatientData!['name'] ?? 'Unknown'}',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87,
-                              fontSize: 16,
-                            ),
-                            textAlign: TextAlign.center,
+                        Text(
+                          'Card ID:',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w500,
+                            color: Colors.grey[700],
                           ),
-                          SizedBox(height: 4),
-                          Text(
-                            'ID: ${_existingPatientData!['patientId'] ?? 'Unknown'}',
-                            style: TextStyle(
-                              color: Colors.grey[700],
-                              fontSize: 14,
-                              fontFamily: 'monospace',
-                            ),
-                            textAlign: TextAlign.center,
+                        ),
+                        SizedBox(height: 4),
+                        SelectableText(
+                          _cardId!,
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 14,
                           ),
-                          if (_existingPatientData!['phone'] != null) ...[
-                            SizedBox(height: 4),
-                            Text(
-                              'Phone: ${_existingPatientData!['phone']}',
-                              style: TextStyle(
-                                color: Colors.grey[700],
-                                fontSize: 14,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ] else ...[
-                          // Show card ID for new registration
-                          Text(
-                            'Card ID:',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w500,
-                              color: Colors.grey[700],
-                            ),
-                          ),
-                          SizedBox(height: 4),
-                          SelectableText(
-                            _cardId!,
-                            style: TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
+                        ),
                       ],
                     ),
+                  ),
+                ],
+
+                // Display comprehensive patient information when found
+                if (_existingPatientData != null && _success) ...[
+                  SizedBox(height: 16),
+                  
+                  // Main Patient Card
+                  Container(
+                    padding: EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withOpacity(0.1),
+                          spreadRadius: 1,
+                          blurRadius: 6,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        // Patient Header with Photo
+                        Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 35,
+                              backgroundColor: Theme.of(context).primaryColor,
+                              child: Text(
+                                _existingPatientData!['name'].substring(0, 1).toUpperCase(),
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _existingPatientData!['name'] ?? 'Unknown',
+                                    style: TextStyle(
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  SizedBox(height: 4),
+                                  Text(
+                                    'IC: ${_existingPatientData!['patientId']}',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey[600],
+                                      fontFamily: 'monospace',
+                                    ),
+                                  ),
+                                  if (_existingPatientData!['registrationDate'] != null) ...[
+                                    SizedBox(height: 2),
+                                    Text(
+                                      'Registered: ${_formatDate(_existingPatientData!['registrationDate'])}',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey[500],
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        
+                        SizedBox(height: 16),
+                        
+                        // Assignment Status Banner
+                        Container(
+                          width: double.infinity,
+                          padding: EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: _existingPatientData!['assignedDoctor'] != null
+                                ? Colors.green.withOpacity(0.1)
+                                : Colors.orange.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: _existingPatientData!['assignedDoctor'] != null
+                                  ? Colors.green.withOpacity(0.3)
+                                  : Colors.orange.withOpacity(0.3),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                _existingPatientData!['assignedDoctor'] != null
+                                    ? Icons.check_circle
+                                    : Icons.schedule,
+                                color: _existingPatientData!['assignedDoctor'] != null
+                                    ? Colors.green
+                                    : Colors.orange,
+                                size: 20,
+                              ),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _existingPatientData!['assignedDoctor'] != null
+                                          ? 'ASSIGNED TO DOCTOR'
+                                          : 'NOT ASSIGNED YET',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: _existingPatientData!['assignedDoctor'] != null
+                                            ? Colors.green[800]
+                                            : Colors.orange[800],
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    if (_existingPatientData!['assignedDoctor'] != null)
+                                      FutureBuilder<String>(
+                                        future: _getDoctorName(_existingPatientData!['assignedDoctor']),
+                                        builder: (context, snapshot) {
+                                          return Text(
+                                            'Doctor: ${snapshot.data ?? 'Loading...'}',
+                                            style: TextStyle(
+                                              color: Colors.green[700],
+                                              fontSize: 11,
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    if (_existingPatientData!['assignedRoom'] != null)
+                                      Text(
+                                        'Room: ${_existingPatientData!['assignedRoom']}',
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  SizedBox(height: 12),
+                  
+                  // Personal Information Section
+                  _buildInfoSection(
+                    title: 'Personal Information',
+                    icon: Icons.person,
+                    color: Colors.blue,
+                    children: [
+                      _buildDetailRow('Date of Birth', _existingPatientData!['dateOfBirth'] ?? 'Not recorded'),
+                      _buildDetailRow('Gender', _existingPatientData!['gender'] ?? 'Not recorded'),
+                      _buildDetailRow('Phone', _existingPatientData!['phone'] ?? 'Not recorded'),
+                      _buildDetailRow('Email', _existingPatientData!['email'] ?? 'Not recorded'),
+                      _buildDetailRow('Address', _existingPatientData!['address'] ?? 'Not recorded'),
+                      if (_existingPatientData!['emergencyContact'] != null)
+                        _buildDetailRow('Emergency Contact', _existingPatientData!['emergencyContact']),
+                    ],
+                  ),
+                  
+                  SizedBox(height: 12),
+                  
+                  // Medical Information Section
+                  _buildInfoSection(
+                    title: 'Medical Information',
+                    icon: Icons.medical_information,
+                    color: Colors.purple,
+                    children: [
+                      if (_existingPatientData!['bloodType'] != null)
+                        _buildDetailRow('Blood Type', _existingPatientData!['bloodType'], 
+                            valueColor: Colors.red[700], isBold: true),
+                      _buildDetailRow('Registration Date', _formatDate(_existingPatientData!['registrationDate'])),
+                      _buildDetailRow('Last Updated', _formatDate(_existingPatientData!['lastUpdated'])),
+                    ],
+                  ),
+                  
+                  // Critical Medical Alerts
+                  if (_existingPatientData!['allergies'] != null && (_existingPatientData!['allergies'] as List).isNotEmpty) ...[
+                    SizedBox(height: 12),
+                    _buildMedicalAlert(
+                      title: '⚠️ ALLERGIES WARNING',
+                      items: _existingPatientData!['allergies'] as List,
+                      color: Colors.red,
+                      icon: Icons.dangerous,
+                    ),
+                  ],
+                  
+                  // Current Medications
+                  if (_existingPatientData!['medications'] != null && (_existingPatientData!['medications'] as List).isNotEmpty) ...[
+                    SizedBox(height: 12),
+                    _buildMedicalAlert(
+                      title: '💊 CURRENT MEDICATIONS',
+                      items: _existingPatientData!['medications'] as List,
+                      color: Colors.blue,
+                      icon: Icons.medication,
+                    ),
+                  ],
+                  
+                  // Medical Conditions
+                  if (_existingPatientData!['conditions'] != null && (_existingPatientData!['conditions'] as List).isNotEmpty) ...[
+                    SizedBox(height: 12),
+                    _buildMedicalAlert(
+                      title: '🏥 MEDICAL CONDITIONS',
+                      items: _existingPatientData!['conditions'] as List,
+                      color: Colors.orange,
+                      icon: Icons.healing,
+                    ),
+                  ],
+                  
+                  // Quick Stats
+                  SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildStatCard(
+                          'Allergies',
+                          (_existingPatientData!['allergies'] as List?)?.length.toString() ?? '0',
+                          Colors.red,
+                          Icons.dangerous,
+                        ),
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: _buildStatCard(
+                          'Medications',
+                          (_existingPatientData!['medications'] as List?)?.length.toString() ?? '0',
+                          Colors.blue,
+                          Icons.medication,
+                        ),
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: _buildStatCard(
+                          'Conditions',
+                          (_existingPatientData!['conditions'] as List?)?.length.toString() ?? '0',
+                          Colors.orange,
+                          Icons.healing,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
                 
@@ -676,7 +921,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                             Icon(Icons.help_outline, color: Colors.grey[600], size: 20),
                             SizedBox(width: 8),
                             Text(
-                              'How to use:',
+                              'How to scan:',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: Colors.grey[800],
@@ -688,8 +933,8 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                         Text(
                           '• Place the NFC card flat against the back of your device\n'
                           '• Keep the card in contact until scanning completes\n'
-                          '• Each card can only be registered to one patient\n'
-                          '• Ensure NFC is enabled in your device settings',
+                          '• If the card is already registered, view patient details\n'
+                          '• If the card is new, proceed to patient registration',
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey[700],
@@ -706,6 +951,211 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value, {Color? valueColor, bool isBold = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              '$label:',
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+                color: Colors.grey[700],
+                fontSize: 13,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                color: valueColor ?? Colors.black87,
+                fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Build information section
+  Widget _buildInfoSection({
+    required String title,
+    required IconData icon,
+    required Color color,
+    required List<Widget> children,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 20),
+              SizedBox(width: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 12),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  // Build medical alert section
+  Widget _buildMedicalAlert({
+    required String title,
+    required List items,
+    required Color color,
+    required IconData icon,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.4), width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, color: Colors.black87, size: 18),
+              ),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${items.length}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[800],
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 12),
+          ...items.map<Widget>((item) {
+            return Padding(
+              padding: EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    margin: EdgeInsets.only(top: 6),
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: Colors.black87,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      item.toString(),
+                      style: TextStyle(
+                        color: Colors.black87,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        ],
+      ),
+    );
+  }
+
+  // Build stat card
+  Widget _buildStatCard(String label, String value, Color color, IconData icon) {
+    return Container(
+      padding: EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 20),
+          SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+            ),
+          ),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey[600],
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }

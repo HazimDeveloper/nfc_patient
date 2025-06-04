@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:nfc_patient_registration/screens/doctor/patient_list.dart';
 import 'package:provider/provider.dart';
 import 'package:nfc_patient_registration/services/auth_service.dart';
 import 'package:nfc_patient_registration/services/database_service.dart';
@@ -95,341 +94,17 @@ class _DoctorHomeState extends State<DoctorHome> {
     }
   }
 
-  // Handle NFC card scan
+  // Handle NFC card scan - Connect to new scanner
   void _handleNFCScan() {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => DoctorNFCScanner(
+        builder: (context) => DoctorNFCCardScanner(
           doctorId: _currentDoctorId!,
           doctorName: _doctorInfo?['name'] ?? 'Doctor',
         ),
       ),
     ).then((_) => _loadPatients()); // Refresh patient list when returning
-  }
-
-  // Handle scanned patient data
-  Future<void> _handleScannedPatientData(Map<String, dynamic> data) async {
-    try {
-      String? patientIC;
-      
-      // Extract IC from various possible fields
-      if (data.containsKey('cardSerialNumber') && data['cardSerialNumber'] != null) {
-        patientIC = data['cardSerialNumber'].toString();
-      } else if (data.containsKey('patientId') && data['patientId'] != null) {
-        patientIC = data['patientId'].toString();
-      } else if (data.containsKey('id') && data['id'] != null) {
-        patientIC = data['id'].toString();
-      }
-
-      if (patientIC == null || patientIC.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Unable to read patient IC from card'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-
-      // Show loading
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => Center(
-          child: Card(
-            child: Padding(
-              padding: EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Looking up patient...'),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-
-      // Get patient data using IC
-      final patientData = await _databaseService.getPatientByIC(patientIC);
-
-      // Close loading dialog
-      Navigator.pop(context);
-
-      if (patientData != null) {
-        // Check if patient is assigned to this doctor
-        final isAssignedToThisDoctor = patientData['assignedDoctor'] == _currentDoctorId;
-        
-        if (isAssignedToThisDoctor) {
-          // Show patient details dialog with actions
-          _showPatientDetailsDialog(patientData);
-        } else {
-          // Show patient info but limited actions
-          _showUnassignedPatientDialog(patientData);
-        }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Patient not found with IC: $patientIC'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-    } catch (e) {
-      // Close loading dialog if open
-      if (Navigator.canPop(context)) {
-        Navigator.pop(context);
-      }
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error looking up patient: ${e.toString()}'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  // Show patient details dialog for assigned patients
-  void _showPatientDetailsDialog(Map<String, dynamic> patientData) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: Theme.of(context).primaryColor,
-              child: Text(
-                patientData['name'].substring(0, 1).toUpperCase(),
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-              ),
-            ),
-            SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    patientData['name'] ?? 'Unknown',
-                    style: TextStyle(fontSize: 18),
-                  ),
-                  Text(
-                    'IC: ${patientData['patientId']}',
-                    style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.green.withOpacity(0.3)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.check_circle, color: Colors.green, size: 20),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'This patient is assigned to you',
-                        style: TextStyle(
-                          color: Colors.green[800],
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(height: 16),
-              _buildPatientInfoRow('Date of Birth', patientData['dateOfBirth'] ?? 'Unknown'),
-              _buildPatientInfoRow('Gender', patientData['gender'] ?? 'Unknown'),
-              _buildPatientInfoRow('Phone', patientData['phone'] ?? 'Unknown'),
-              _buildPatientInfoRow('Room', patientData['assignedRoom'] ?? 'Not assigned'),
-              if (patientData['bloodType'] != null)
-                _buildPatientInfoRow('Blood Type', patientData['bloodType']),
-              
-              // Show allergies if any
-              if (patientData['allergies'] != null && (patientData['allergies'] as List).isNotEmpty) ...[
-                SizedBox(height: 12),
-                Text(
-                  'Allergies:',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.red[800],
-                  ),
-                ),
-                SizedBox(height: 4),
-                Container(
-                  padding: EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: (patientData['allergies'] as List).map<Widget>((allergy) {
-                      return Text(
-                        '• $allergy',
-                        style: TextStyle(color: Colors.red[700]),
-                      );
-                    }).toList(),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Close'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => PrescriptionForm(
-                    patientId: patientData['patientId'],
-                    patientName: patientData['name'],
-                  ),
-                ),
-              );
-            },
-            icon: Icon(Icons.medication),
-            label: Text('Prescribe'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).primaryColor,
-              foregroundColor: Colors.white,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Show dialog for unassigned patients
-  void _showUnassignedPatientDialog(Map<String, dynamic> patientData) {
-    final isAssigned = patientData['assignedDoctor'] != null;
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: Colors.orange,
-              child: Text(
-                patientData['name'].substring(0, 1).toUpperCase(),
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-              ),
-            ),
-            SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    patientData['name'] ?? 'Unknown',
-                    style: TextStyle(fontSize: 18),
-                  ),
-                  Text(
-                    'IC: ${patientData['patientId']}',
-                    style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withOpacity(0.3)),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info, color: Colors.orange, size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      isAssigned 
-                          ? 'This patient is assigned to another doctor'
-                          : 'This patient is not assigned to any doctor yet',
-                      style: TextStyle(
-                        color: Colors.orange[800],
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            SizedBox(height: 16),
-            _buildPatientInfoRow('Date of Birth', patientData['dateOfBirth'] ?? 'Unknown'),
-            _buildPatientInfoRow('Gender', patientData['gender'] ?? 'Unknown'),
-            _buildPatientInfoRow('Phone', patientData['phone'] ?? 'Unknown'),
-            if (isAssigned)
-              _buildPatientInfoRow('Assigned Room', patientData['assignedRoom'] ?? 'Not assigned'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPatientInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              '$label:',
-              style: TextStyle(
-                fontWeight: FontWeight.w500,
-                color: Colors.grey[700],
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: TextStyle(
-                color: Colors.black87,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -440,16 +115,6 @@ class _DoctorHomeState extends State<DoctorHome> {
       appBar: AppBar(
         title: Text('Doctor Dashboard', style: TextStyle(color: Colors.white)),
         actions: [
-          IconButton(
-            icon: Icon(Icons.people),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => PatientList()),
-              );
-            },
-            tooltip: 'View All Patients',
-          ),
           IconButton(
             icon: Icon(Icons.exit_to_app),
             onPressed: () => authService.signOut(),
@@ -582,7 +247,7 @@ class _DoctorHomeState extends State<DoctorHome> {
             ),
           ),
         
-        // Quick actions section
+        // Quick actions section - Removed "All My Patients" button
         Container(
           padding: EdgeInsets.all(16),
           color: Colors.grey.withOpacity(0.1),
@@ -608,20 +273,22 @@ class _DoctorHomeState extends State<DoctorHome> {
                     color: Colors.blue,
                   ),
                   _buildActionButton(
-                    icon: Icons.people,
-                    label: 'All My Patients',
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (context) => PatientList()),
-                      );
-                    },
+                    icon: Icons.refresh,
+                    label: 'Refresh Patient List',
+                    onPressed: _loadPatients,
                     color: Colors.green,
                   ),
                   _buildActionButton(
-                    icon: Icons.refresh,
-                    label: 'Refresh List',
-                    onPressed: _loadPatients,
+                    icon: Icons.medication,
+                    label: 'Quick Prescription',
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Scan a patient card first to create prescription'),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                    },
                     color: Colors.orange,
                   ),
                 ],
@@ -707,18 +374,38 @@ class _DoctorHomeState extends State<DoctorHome> {
                         ),
                         child: Column(
                           children: [
-                            Icon(Icons.info, color: Colors.blue, size: 24),
+                            Icon(Icons.contactless, color: Colors.blue, size: 32),
                             SizedBox(height: 8),
                             Text(
-                              'You can still scan patient cards to view their information',
+                              'Use NFC Scanner',
                               style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
                                 color: Colors.blue[800],
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'Scan any patient card to view their information and create prescriptions',
+                              style: TextStyle(
+                                color: Colors.blue[700],
                                 fontSize: 13,
-                                fontWeight: FontWeight.w500,
                               ),
                               textAlign: TextAlign.center,
                             ),
                           ],
+                        ),
+                      ),
+                      SizedBox(height: 24),
+                      ElevatedButton.icon(
+                        onPressed: _handleNFCScan,
+                        icon: Icon(Icons.contactless),
+                        label: Text('Scan Patient Card'),
+                        style: ElevatedButton.styleFrom(
+                          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
                         ),
                       ),
                       SizedBox(height: 16),
@@ -726,6 +413,14 @@ class _DoctorHomeState extends State<DoctorHome> {
                         onPressed: _loadPatients,
                         icon: Icon(Icons.refresh),
                         label: Text('Check for New Assignments'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -889,15 +584,11 @@ class _DoctorHomeState extends State<DoctorHome> {
               children: [
                 OutlinedButton.icon(
                   onPressed: () {
-                    // View patient history (to be implemented)
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Patient history feature coming soon'),
-                      ),
-                    );
+                    // Use NFC scanner to view full patient details
+                    _handleNFCScan();
                   },
-                  icon: Icon(Icons.history),
-                  label: Text('History'),
+                  icon: Icon(Icons.contactless),
+                  label: Text('Scan Card'),
                 ),
 
                 ElevatedButton.icon(
