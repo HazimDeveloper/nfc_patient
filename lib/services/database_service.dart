@@ -774,4 +774,8 @@ class DatabaseService {
       };
     }
   }
+
+   Future<void> markPatientAsCompleted(String patientId) async {
+    await _markPatientAsCompleted(patientId);
+  }
 }

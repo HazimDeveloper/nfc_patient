@@ -108,15 +108,21 @@ class _AuthWrapperState extends State<AuthWrapper> {
     final authService = Provider.of<AuthService>(context);
     
     return StreamBuilder(
-      stream: authService.user,
+      stream: authService.userStream,
       builder: (_, AsyncSnapshot snapshot) {
         if (snapshot.connectionState == ConnectionState.active) {
-          final user = snapshot.data;
-          if (user == null) {
+          final userData = snapshot.data;
+          
+          if (userData == null) {
             return LoginScreen();
           }
           
-          // Check user role and redirect accordingly
+          // Check if it's a patient session
+          if (userData['isPatient'] == true) {
+            return PatientHome();
+          }
+          
+          // For staff users, check role
           return FutureBuilder(
             future: authService.getUserRole(),
             builder: (context, roleSnapshot) {

@@ -25,7 +25,6 @@ class _PatientHomeState extends State<PatientHome> {
     _loadPatientData();
   }
 
-  // Load patient data and prescriptions
   Future<void> _loadPatientData() async {
     setState(() {
       _isLoading = true;
@@ -42,13 +41,11 @@ class _PatientHomeState extends State<PatientHome> {
 
       print('Loading data for patient ID: $patientId');
 
-      // Get patient data using IC number
       final patientData = await _databaseService.getPatientById(patientId);
       
       if (patientData != null) {
         _patient = Patient.fromFirestore(patientData);
         
-        // Get patient's prescriptions
         final prescriptionsData = await _databaseService.getPrescriptionsByPatient(patientId);
         
         _prescriptions = prescriptionsData
@@ -58,16 +55,13 @@ class _PatientHomeState extends State<PatientHome> {
                 ))
             .toList();
         
-        // Sort prescriptions by date (newest first)
         _prescriptions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
         
-        // Get current appointment and doctor info if available
         if (_patient!.currentAppointment != null) {
           final appointmentData = await _databaseService.getAppointmentById(_patient!.currentAppointment!);
           if (appointmentData != null) {
             _appointment = appointmentData;
             
-            // Get doctor information
             final doctorData = await _databaseService.getDoctorById(appointmentData['doctorId']);
             if (doctorData != null) {
               _doctorInfo = doctorData;
@@ -195,12 +189,8 @@ class _PatientHomeState extends State<PatientHome> {
         _buildProfileCard(),
         SizedBox(height: 24),
         
-        // Current appointment card (if any)
-        if (_appointment != null) ...[
-          _buildAppointmentCard(),
-          SizedBox(height: 24),
-        ] else
-          _buildNoAppointmentCard(),
+        // Assignment status card
+        _buildAssignmentStatusCard(),
         
         SizedBox(height: 24),
         
@@ -251,7 +241,6 @@ class _PatientHomeState extends State<PatientHome> {
             padding: EdgeInsets.symmetric(vertical: 16),
             child: OutlinedButton(
               onPressed: () {
-                // TODO: Navigate to full prescription history
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('Full prescription history coming soon'),
@@ -282,7 +271,6 @@ class _PatientHomeState extends State<PatientHome> {
         Divider(),
         SizedBox(height: 8),
         
-        // Allergies
         _buildMedicalInfoCard(
           title: 'Allergies',
           icon: Icons.dangerous,
@@ -290,7 +278,6 @@ class _PatientHomeState extends State<PatientHome> {
         ),
         SizedBox(height: 16),
         
-        // Current medications
         _buildMedicalInfoCard(
           title: 'Current Medications',
           icon: Icons.medication,
@@ -298,7 +285,6 @@ class _PatientHomeState extends State<PatientHome> {
         ),
         SizedBox(height: 16),
         
-        // Medical conditions
         _buildMedicalInfoCard(
           title: 'Medical Conditions',
           icon: Icons.healing,
@@ -433,210 +419,234 @@ class _PatientHomeState extends State<PatientHome> {
     );
   }
 
-  Widget _buildAppointmentCard() {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Container(
-        decoration: BoxDecoration(
+  Widget _buildAssignmentStatusCard() {
+    // Check patient status
+    String status = _patient?.currentAppointment != null ? 'assigned' : 'waiting';
+    
+    if (_appointment != null) {
+      return Card(
+        elevation: 2,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          gradient: LinearGradient(
-            colors: [Colors.green.withOpacity(0.1), Colors.blue.withOpacity(0.1)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
         ),
-        child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.assignment_ind,
-                    color: Colors.green,
-                    size: 24,
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    'Current Assignment',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green[800],
-                    ),
-                  ),
-                ],
-              ),
-              Divider(),
-              SizedBox(height: 8),
-              
-              if (_doctorInfo != null) ...[
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            gradient: LinearGradient(
+              colors: [Colors.green.withOpacity(0.1), Colors.blue.withOpacity(0.1)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Row(
                   children: [
-                    Icon(Icons.medical_services, size: 18, color: Colors.grey[600]),
+                    Icon(
+                      Icons.assignment_ind,
+                      color: Colors.green,
+                      size: 24,
+                    ),
                     SizedBox(width: 8),
                     Text(
-                      'Doctor:',
+                      'You are assigned!',
                       style: TextStyle(
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _doctorInfo!['name'],
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 8),
-                Row(
-                  children: [
-                    Icon(Icons.local_hospital, size: 18, color: Colors.grey[600]),
-                    SizedBox(width: 8),
-                    Text(
-                      'Specialty:',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _doctorInfo!['specialization'] ?? 'General',
-                        style: TextStyle(
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 8),
-              ],
-              
-              Row(
-                children: [
-                  Icon(Icons.meeting_room, size: 18, color: Colors.grey[600]),
-                  SizedBox(width: 8),
-                  Text(
-                    'Room:',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w500,
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                  SizedBox(width: 8),
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.blue.withOpacity(0.3)),
-                    ),
-                    child: Text(
-                      _appointment!['roomNumber'] ?? 'Not assigned',
-                      style: TextStyle(
+                        fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        color: Colors.blue[800],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              
-              if (_appointment?['notes'] != null && _appointment!['notes'].toString().isNotEmpty) ...[
-                SizedBox(height: 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.note, size: 18, color: Colors.grey[600]),
-                    SizedBox(width: 8),
-                    Text(
-                      'Notes:',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _appointment!['notes'],
-                        style: TextStyle(
-                          color: Colors.black87,
-                        ),
+                        color: Colors.green[800],
                       ),
                     ),
                   ],
                 ),
+                Divider(),
+                SizedBox(height: 8),
+                
+                if (_doctorInfo != null) ...[
+                  _buildAssignmentInfoRow(
+                    icon: Icons.medical_services,
+                    label: 'Doctor',
+                    value: 'Dr. ${_doctorInfo!['name']}',
+                  ),
+                  SizedBox(height: 8),
+                  _buildAssignmentInfoRow(
+                    icon: Icons.local_hospital,
+                    label: 'Specialty',
+                    value: _doctorInfo!['specialization'] ?? 'General',
+                  ),
+                  SizedBox(height: 8),
+                ],
+                
+                _buildAssignmentInfoRow(
+                  icon: Icons.meeting_room,
+                  label: 'Room',
+                  value: _appointment!['roomNumber'] ?? 'Not assigned',
+                  isHighlighted: true,
+                ),
+                
+                if (_appointment?['notes'] != null && _appointment!['notes'].toString().isNotEmpty) ...[
+                  SizedBox(height: 8),
+                  _buildAssignmentInfoRow(
+                    icon: Icons.note,
+                    label: 'Notes',
+                    value: _appointment!['notes'],
+                  ),
+                ],
+                
+                SizedBox(height: 12),
+                
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info, color: Colors.blue, size: 20),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Please proceed to your assigned room for consultation.',
+                          style: TextStyle(
+                            color: Colors.blue[800],
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
-            ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+    } else {
+      return Card(
+        elevation: 2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: Colors.orange.withOpacity(0.1),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Icon(
+                  Icons.schedule,
+                  size: 48,
+                  color: Colors.orange,
+                ),
+                SizedBox(height: 12),
+                Text(
+                  'Waiting for Assignment',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.orange[800],
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'You are currently in the queue. A nurse will assign you to a doctor and room shortly.',
+                  style: TextStyle(
+                    color: Colors.grey[700],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.access_time, color: Colors.orange, size: 20),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Please wait in the waiting area. You will be notified when ready.',
+                          style: TextStyle(
+                            color: Colors.orange[800],
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
   }
 
-  Widget _buildNoAppointmentCard() {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: Colors.orange.withOpacity(0.1),
-        ),
-        child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Column(
-            children: [
-              Icon(
-                Icons.schedule,
-                size: 48,
-                color: Colors.orange,
-              ),
-              SizedBox(height: 12),
-              Text(
-                'Waiting for Assignment',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.orange[800],
-                ),
-              ),
-              SizedBox(height: 8),
-              Text(
-                'You are currently in the queue. A nurse will assign you to a doctor and room shortly.',
-                style: TextStyle(
-                  color: Colors.grey[700],
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
+  Widget _buildAssignmentInfoRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    bool isHighlighted = false,
+  }) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: Colors.grey[600]),
+        SizedBox(width: 8),
+        Text(
+          '$label:',
+          style: TextStyle(
+            fontWeight: FontWeight.w500,
+            color: Colors.grey[700],
           ),
         ),
-      ),
+        SizedBox(width: 8),
+        Expanded(
+          child: isHighlighted
+              ? Container(
+                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                  ),
+                  child: Text(
+                    value,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue[800],
+                    ),
+                  ),
+                )
+              : Text(
+                  value,
+                  style: TextStyle(
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+        ),
+      ],
     );
   }
 
   Widget _buildPrescriptionCard(Prescription prescription) {
-    // Format date
     final createdAt = prescription.createdAt;
     final formattedDate = '${createdAt.day}/${createdAt.month}/${createdAt.year}';
     
-    // Get status color
     Color statusColor;
     switch (prescription.status) {
       case 'pending':
@@ -652,7 +662,6 @@ class _PatientHomeState extends State<PatientHome> {
         statusColor = Colors.grey;
     }
     
-    // Get medications preview
     final medicationsText = prescription.medications.length > 1
         ? '${prescription.medications[0].name} and ${prescription.medications.length - 1} more'
         : prescription.medications[0].name;

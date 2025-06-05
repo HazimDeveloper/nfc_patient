@@ -8,11 +8,35 @@ class AuthService with ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final DatabaseService _databaseService = DatabaseService();
   
+  // Add this property to track patient sessions
+  Map<String, dynamic>? _currentPatientSession;
+  
   // Get auth state changes
   Stream<User?> get user => _auth.authStateChanges();
   
   // Get current user
   User? get currentUser => _auth.currentUser;
+  
+  // Check if user is logged in (including patient sessions)
+  bool get isLoggedIn {
+    return currentUser != null || _currentPatientSession != null;
+  }
+  
+  // Get current user stream that includes patient sessions
+  Stream<Map<String, dynamic>?> get userStream {
+    return Stream.periodic(Duration(seconds: 1), (i) {
+      if (_currentPatientSession != null) {
+        return _currentPatientSession;
+      } else if (currentUser != null) {
+        return {
+          'uid': currentUser!.uid,
+          'email': currentUser!.email,
+          'isPatient': false,
+        };
+      }
+      return null;
+    });
+  }
   
   // Sign in with email and password
   Future<User?> signInWithEmailAndPassword(String email, String password) async {
@@ -25,6 +49,37 @@ class AuthService with ChangeNotifier {
       return result.user;
     } catch (e) {
       print('Error signing in: ${e.toString()}');
+      rethrow;
+    }
+  }
+  
+  // Sign in patient with IC number
+  Future<void> signInPatientWithIC(String icNumber) async {
+    try {
+      final patientData = await _databaseService.getPatientByIC(icNumber);
+      
+      if (patientData == null) {
+        throw Exception('Patient not found. Please check your IC number or contact the hospital.');
+      }
+      
+      // Create a temporary user session for patient
+      // Since patients don't have Firebase Auth accounts, we'll use a different approach
+      await _firestore.collection('patient_sessions').doc(icNumber).set({
+        'patientId': icNumber,
+        'loginTime': FieldValue.serverTimestamp(),
+        'isActive': true,
+      });
+      
+      // Store patient session locally
+      _currentPatientSession = {
+        'patientId': icNumber,
+        'isPatient': true,
+        'loginTime': DateTime.now(),
+      };
+      
+      notifyListeners();
+    } catch (e) {
+      print('Error signing in patient: ${e.toString()}');
       rethrow;
     }
   }
@@ -142,12 +197,33 @@ class AuthService with ChangeNotifier {
   
   // Sign out
   Future<void> signOut() async {
+    // Clear patient session if exists
+    if (_currentPatientSession != null) {
+      try {
+        await _firestore.collection('patient_sessions')
+            .doc(_currentPatientSession!['patientId'])
+            .update({
+          'isActive': false,
+          'logoutTime': FieldValue.serverTimestamp(),
+        });
+      } catch (e) {
+        print('Error updating patient session: $e');
+      }
+      _currentPatientSession = null;
+    }
+    
+    // Sign out from Firebase
     await _auth.signOut();
     notifyListeners();
   }
   
   // Get user role from Firestore - SIMPLIFIED and SAFE
   Future<String> getUserRole() async {
+    // Check if it's a patient session first
+    if (_currentPatientSession != null && _currentPatientSession!['isPatient'] == true) {
+      return 'patient';
+    }
+    
     if (currentUser == null) return 'patient';
     
     try {
@@ -177,6 +253,11 @@ class AuthService with ChangeNotifier {
   
   // Get current user ID - SIMPLIFIED and SAFE
   Future<String?> getCurrentUserId() async {
+    // Check if it's a patient session first
+    if (_currentPatientSession != null && _currentPatientSession!['isPatient'] == true) {
+      return _currentPatientSession!['patientId'];
+    }
+    
     if (currentUser == null) return null;
     
     try {
