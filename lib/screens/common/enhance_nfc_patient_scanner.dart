@@ -1,20 +1,21 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_nfc_kit/flutter_nfc_kit.dart';
+import 'package:flutter/services.dart';
+import 'package:nfc_manager/nfc_manager.dart';
 import 'package:nfc_patient_registration/services/database_service.dart';
+import 'package:nfc_patient_registration/screens/nurse/patient_detail_screen.dart';
 import 'package:nfc_patient_registration/screens/doctor/prescription_form.dart';
-import 'package:nfc_patient_registration/screens/nurse/assign_doctor.dart';
+import 'package:nfc_patient_registration/screens/pharmacist/prescription_view.dart';
 
 class EnhancedNFCPatientScanner extends StatefulWidget {
   final String userRole; // 'doctor', 'nurse', 'pharmacist'
-  final String? userId; // current user ID
-  final String? userName; // current user name
+  final String userId;
+  final String userName;
 
   const EnhancedNFCPatientScanner({
     Key? key,
     required this.userRole,
-    this.userId,
-    this.userName,
+    required this.userId,
+    required this.userName,
   }) : super(key: key);
 
   @override
@@ -22,743 +23,490 @@ class EnhancedNFCPatientScanner extends StatefulWidget {
 }
 
 class _EnhancedNFCPatientScannerState extends State<EnhancedNFCPatientScanner> 
-    with SingleTickerProviderStateMixin {
-  bool _isScanning = false;
-  String _statusMessage = 'Tap "Scan Patient Card" to begin';
-  bool _success = false;
-  bool _error = false;
-  String? _cardId;
-  String? _errorMessage;
-  Map<String, dynamic>? _patientData;
-  List<Map<String, dynamic>>? _prescriptions;
-  Map<String, dynamic>? _assignmentInfo;
+    with TickerProviderStateMixin {
   
-  late AnimationController _animationController;
-  late Animation<double> _animation;
+  final DatabaseService _databaseService = DatabaseService();
+  
+  bool _isScanning = false;
+  bool _nfcAvailable = false;
+  String _statusMessage = 'Tap "Start Scanning" to begin';
+  Map<String, dynamic>? _patientData;
+  List<Map<String, dynamic>> _patientHistory = [];
+  String? _error;
+  
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
 
   @override
   void initState() {
     super.initState();
-    
-    _animationController = AnimationController(
-      vsync: this,
+    _initializeNFC();
+    _setupAnimations();
+  }
+
+  void _setupAnimations() {
+    _pulseController = AnimationController(
       duration: Duration(seconds: 2),
-    )..repeat(reverse: true);
-    
-    _animation = Tween<double>(begin: 0.8, end: 1.2).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: Curves.easeInOut,
-      ),
+      vsync: this,
     );
+    _pulseAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _pulseController,
+      curve: Curves.easeInOut,
+    ));
   }
 
   @override
   void dispose() {
-    _animationController.dispose();
+    _pulseController.dispose();
+    if (_isScanning) {
+      NfcManager.instance.stopSession();
+    }
     super.dispose();
   }
 
-  // Start NFC scanning
-  Future<void> _startNFCScanning() async {
+  Future<void> _initializeNFC() async {
     try {
-      var availability = await FlutterNfcKit.nfcAvailability;
-      
-      if (availability != NFCAvailability.available) {
-        setState(() {
-          _statusMessage = 'NFC is not available on this device';
-          _error = true;
-          _isScanning = false;
-          _errorMessage = 'Please enable NFC and try again.';
-        });
-        return;
-      }
-      
+      bool isAvailable = await NfcManager.instance.isAvailable();
       setState(() {
-        _isScanning = true;
-        _error = false;
-        _success = false;
-        _cardId = null;
-        _errorMessage = null;
-        _patientData = null;
-        _prescriptions = null;
-        _assignmentInfo = null;
-        _statusMessage = 'Place patient\'s NFC card on the back of your device';
+        _nfcAvailable = isAvailable;
+        if (!isAvailable) {
+          _statusMessage = 'NFC is not available on this device';
+          _error = 'Please ensure NFC is enabled in device settings';
+        }
       });
-      
-      try {
-        var tag = await FlutterNfcKit.poll();
-        String cardSerialNumber = tag.id;
-        
-        setState(() {
-          _cardId = cardSerialNumber;
-          _statusMessage = 'Card detected, loading patient information...';
-        });
-        
-        await _loadPatientData(cardSerialNumber);
-        
-      } catch (e) {
-        setState(() {
-          _success = false;
-          _error = true;
-          _isScanning = false;
-          _statusMessage = 'Error reading card';
-          _errorMessage = e.toString();
-        });
-      } finally {
-        await FlutterNfcKit.finish();
-      }
     } catch (e) {
       setState(() {
-        _success = false;
-        _error = true;
-        _isScanning = false;
+        _nfcAvailable = false;
         _statusMessage = 'Error initializing NFC';
-        _errorMessage = e.toString();
+        _error = e.toString();
       });
     }
   }
-  
-  // Load all patient data including prescriptions and assignments
-  Future<void> _loadPatientData(String cardId) async {
+
+  Future<void> _startScanning() async {
+    if (!_nfcAvailable) {
+      _showSnackBar('NFC is not available', Colors.red);
+      return;
+    }
+
+    setState(() {
+      _isScanning = true;
+      _statusMessage = 'Hold your device near the patient\'s NFC card...';
+      _patientData = null;
+      _patientHistory = [];
+      _error = null;
+    });
+
+    _pulseController.repeat();
+
     try {
-      final databaseService = DatabaseService();
+      await NfcManager.instance.startSession(
+        onDiscovered: (NfcTag tag) async {
+          await _processNFCTag(tag);
+        },
+      );
+    } catch (e) {
+      setState(() {
+        _isScanning = false;
+        _statusMessage = 'Error starting NFC scan';
+        _error = e.toString();
+      });
+      _pulseController.stop();
+    }
+  }
+
+  Future<void> _processNFCTag(NfcTag tag) async {
+    try {
+      HapticFeedback.mediumImpact();
       
-      // Get patient basic info
-      final patientInfo = await databaseService.getPatientByIC(cardId);
+      // Extract card ID from NFC tag
+      String? cardId = _extractCardId(tag);
       
-      if (patientInfo == null) {
+      if (cardId == null || cardId.isEmpty) {
+        throw Exception('Could not read card ID from NFC tag');
+      }
+
+      print('Card ID detected: $cardId');
+      setState(() {
+        _statusMessage = 'Card detected! Looking up patient...';
+      });
+
+      // FIXED: Find patient by card serial number
+      final patientData = await _findPatientByCard(cardId);
+      
+      if (patientData == null) {
         setState(() {
-          _success = false;
-          _error = true;
-          _isScanning = false;
           _statusMessage = 'Patient not found';
-          _errorMessage = 'No patient is registered with this card.';
+          _error = 'No patient is registered with this card.';
+          _isScanning = false;
         });
+        _pulseController.stop();
+        await NfcManager.instance.stopSession(errorMessage: 'Patient not found');
         return;
       }
+
+      // FIXED: Load patient history for all roles
+      final history = await _loadPatientHistory(patientData['patientId']);
+
+      setState(() {
+        _patientData = patientData;
+        _patientHistory = history;
+        _statusMessage = 'Patient found: ${patientData['name']}';
+        _isScanning = false;
+      });
+
+      _pulseController.stop();
+      await NfcManager.instance.stopSession();
       
-      // Get patient prescriptions
-      final prescriptions = await databaseService.getPrescriptionsByPatient(cardId);
+      HapticFeedback.selectionClick();
+
+    } catch (e) {
+      print('Error processing NFC tag: $e');
+      setState(() {
+        _statusMessage = 'Error reading card';
+        _error = e.toString();
+        _isScanning = false;
+      });
+      _pulseController.stop();
+      await NfcManager.instance.stopSession();
+    }
+  }
+
+  // FIXED: Find patient by card serial number
+  Future<Map<String, dynamic>?> _findPatientByCard(String cardSerialNumber) async {
+    try {
+      print('Searching for patient with card: $cardSerialNumber');
       
-      // Get assignment/appointment info if exists
-      Map<String, dynamic>? assignmentInfo;
-      if (patientInfo['currentAppointment'] != null) {
-        assignmentInfo = await databaseService.getAppointmentById(patientInfo['currentAppointment']);
-        
-        // Get doctor info for the assignment
-        if (assignmentInfo != null && assignmentInfo['doctorId'] != null) {
-          final doctorInfo = await databaseService.getDoctorById(assignmentInfo['doctorId']);
-          if (doctorInfo != null) {
-            assignmentInfo['doctorName'] = doctorInfo['name'];
-            assignmentInfo['doctorSpecialization'] = doctorInfo['specialization'];
-          }
+      // Search for patient with this card serial number
+      final snapshot = await _databaseService.patientsCollection
+          .where('cardSerialNumber', isEqualTo: cardSerialNumber)
+          .limit(1)
+          .get();
+      
+      if (snapshot.docs.isNotEmpty) {
+        final patientData = snapshot.docs.first.data() as Map<String, dynamic>;
+        print('Patient found: ${patientData['name']}');
+        return patientData;
+      }
+      
+      print('No patient found with card: $cardSerialNumber');
+      return null;
+      
+    } catch (e) {
+      print('Error finding patient by card: $e');
+      return null;
+    }
+  }
+
+  // FIXED: Load complete patient history
+  Future<List<Map<String, dynamic>>> _loadPatientHistory(String patientId) async {
+    try {
+      print('Loading history for patient: $patientId');
+      
+      List<Map<String, dynamic>> history = [];
+      
+      // Load appointments
+      final appointments = await _databaseService.getAppointmentsByPatient(patientId);
+      for (var appointment in appointments) {
+        appointment['type'] = 'appointment';
+        history.add(appointment);
+      }
+      
+      // Load prescriptions
+      final prescriptions = await _databaseService.getPrescriptionsByPatient(patientId);
+      for (var prescription in prescriptions) {
+        prescription['type'] = 'prescription';
+        history.add(prescription);
+      }
+      
+      // Sort by date (newest first)
+      history.sort((a, b) {
+        final aDate = a['createdAt'] ?? a['appointmentDate'] ?? DateTime.now();
+        final bDate = b['createdAt'] ?? b['appointmentDate'] ?? DateTime.now();
+        return bDate.compareTo(aDate);
+      });
+      
+      print('Loaded ${history.length} history items');
+      return history;
+      
+    } catch (e) {
+      print('Error loading patient history: $e');
+      return [];
+    }
+  }
+
+  String? _extractCardId(NfcTag tag) {
+    try {
+      // Try different methods to extract card ID
+      if (tag.data['nfca'] != null) {
+        final nfcaData = tag.data['nfca'] as Map<String, dynamic>;
+        if (nfcaData['identifier'] != null) {
+          final identifier = nfcaData['identifier'] as List<int>;
+          return identifier.map((e) => e.toRadixString(16).padLeft(2, '0')).join('');
         }
       }
       
-      setState(() {
-        _patientData = patientInfo;
-        _prescriptions = prescriptions;
-        _assignmentInfo = assignmentInfo;
-        _success = true;
-        _error = false;
-        _isScanning = false;
-        _statusMessage = 'Patient information loaded successfully';
-      });
+      if (tag.data['nfcb'] != null) {
+        final nfcbData = tag.data['nfcb'] as Map<String, dynamic>;
+        if (nfcbData['identifier'] != null) {
+          final identifier = nfcbData['identifier'] as List<int>;
+          return identifier.map((e) => e.toRadixString(16).padLeft(2, '0')).join('');
+        }
+      }
       
+      if (tag.data['nfcf'] != null) {
+        final nfcfData = tag.data['nfcf'] as Map<String, dynamic>;
+        if (nfcfData['identifier'] != null) {
+          final identifier = nfcfData['identifier'] as List<int>;
+          return identifier.map((e) => e.toRadixString(16).padLeft(2, '0')).join('');
+        }
+      }
+      
+      if (tag.data['nfcv'] != null) {
+        final nfcvData = tag.data['nfcv'] as Map<String, dynamic>;
+        if (nfcvData['identifier'] != null) {
+          final identifier = nfcvData['identifier'] as List<int>;
+          return identifier.map((e) => e.toRadixString(16).padLeft(2, '0')).join('');
+        }
+      }
+      
+      return null;
     } catch (e) {
-      setState(() {
-        _success = false;
-        _error = true;
-        _isScanning = false;
-        _statusMessage = 'Error loading patient data';
-        _errorMessage = e.toString();
-      });
+      print('Error extracting card ID: $e');
+      return null;
     }
   }
-  
-  // Cancel scanning
-  void _cancelScanning() async {
-    try {
-      await FlutterNfcKit.finish();
+
+  void _stopScanning() {
+    if (_isScanning) {
+      NfcManager.instance.stopSession();
       setState(() {
         _isScanning = false;
-        _statusMessage = 'Scan cancelled';
+        _statusMessage = 'Scanning stopped';
       });
-    } catch (e) {
-      print('Error cancelling scan: $e');
+      _pulseController.stop();
     }
   }
-  
-  // Get role-specific title
-  String _getRoleTitle() {
-    switch (widget.userRole) {
-      case 'doctor':
-        return 'Doctor - Patient Scanner';
-      case 'nurse':
-        return 'Nurse - Patient Scanner';
-      case 'pharmacist':
-        return 'Pharmacist - Patient Scanner';
-      default:
-        return 'Patient Scanner';
-    }
-  }
-  
-  // Check if current user can perform actions on this patient
-  bool _canPerformActions() {
-    if (_patientData == null) return false;
-    
-    if (widget.userRole == 'doctor') {
-      // Doctor can only act on patients assigned to them
-      return _assignmentInfo?['doctorId'] == widget.userId;
-    } else if (widget.userRole == 'nurse') {
-      // Nurse can assign doctors to unassigned patients
-      return true;
-    } else if (widget.userRole == 'pharmacist') {
-      // Pharmacist can dispense to any patient with prescriptions
-      return _prescriptions != null && _prescriptions!.isNotEmpty;
-    }
-    
-    return false;
+
+  void _showSnackBar(String message, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        duration: Duration(seconds: 3),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_getRoleTitle(), style: TextStyle(color: Colors.white)),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.refresh),
-            onPressed: () {
-              setState(() {
-                _cardId = null;
-                _patientData = null;
-                _prescriptions = null;
-                _assignmentInfo = null;
-                _success = false;
-                _error = false;
-                _isScanning = false;
-                _statusMessage = 'Tap "Scan Patient Card" to begin';
-                _errorMessage = null;
-              });
-            },
-            tooltip: 'Reset',
+        title: Text('${_getRoleTitle()} - Patient Scanner'),
+        backgroundColor: _getRoleColor(),
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: Column(
+        children: [
+          // Header section
+          Container(
+            width: double.infinity,
+            padding: EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: _getRoleColor(),
+              borderRadius: BorderRadius.only(
+                bottomLeft: Radius.circular(30),
+                bottomRight: Radius.circular(30),
+              ),
+            ),
+            child: Column(
+              children: [
+                Icon(
+                  _getRoleIcon(),
+                  size: 50,
+                  color: Colors.white,
+                ),
+                SizedBox(height: 10),
+                Text(
+                  widget.userRole.toUpperCase(),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          Expanded(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  // NFC Scanning Area
+                  _buildScanningArea(),
+                  
+                  SizedBox(height: 20),
+                  
+                  // Patient Information
+                  if (_patientData != null) _buildPatientInfo(),
+                  
+                  // Patient History
+                  if (_patientHistory.isNotEmpty) _buildPatientHistory(),
+                  
+                  // Error display
+                  if (_error != null) _buildErrorDisplay(),
+                ],
+              ),
+            ),
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            children: [
-              // User info header
-              if (widget.userName != null)
-                Container(
-                  padding: EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Theme.of(context).primaryColor.withOpacity(0.8),
-                        Theme.of(context).primaryColor,
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        backgroundColor: Colors.white.withOpacity(0.2),
-                        child: Icon(
-                          widget.userRole == 'doctor' ? Icons.medical_services :
-                          widget.userRole == 'nurse' ? Icons.local_hospital :
-                          Icons.medication,
-                          color: Colors.white,
-                        ),
-                      ),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              widget.userName!,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            Text(
-                              widget.userRole.toUpperCase(),
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.9),
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              
-              SizedBox(height: 24),
-              
-              // NFC animation or status icon
-              if (_isScanning)
-                ScaleTransition(
-                  scale: _animation,
-                  child: Container(
-                    width: 160,
-                    height: 160,
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).primaryColor.withOpacity(0.1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.contactless,
-                      size: 80,
-                      color: Theme.of(context).primaryColor,
-                    ),
-                  ),
-                )
-              else if (_success)
-                Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.check_circle,
-                    size: 60,
-                    color: Colors.green,
-                  ),
-                )
-              else if (_error)
-                Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.error,
-                    size: 60,
-                    color: Colors.red,
-                  ),
-                )
-              else
-                Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.contactless,
-                    size: 60,
-                    color: Colors.grey,
-                  ),
-                ),
-              
-              SizedBox(height: 24),
-              
-              // Status message
-              Text(
-                _statusMessage,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: _error ? Colors.red : _success ? Colors.green : Colors.black,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              
-              // Error message
-              if (_errorMessage != null) ...[
-                SizedBox(height: 8),
-                Container(
-                  padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.red.withOpacity(0.3)),
-                  ),
-                  child: Text(
-                    _errorMessage!,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.red[700],
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ],
-              
-              SizedBox(height: 24),
-              
-              // Patient Information (when successful)
-              if (_patientData != null && _success) ...[
-                _buildPatientInfoCard(),
-                SizedBox(height: 16),
-                
-                // Assignment Information
-                if (_assignmentInfo != null)
-                  _buildAssignmentInfoCard(),
-                
-                SizedBox(height: 16),
-                
-                // Prescriptions Information
-                if (_prescriptions != null && _prescriptions!.isNotEmpty)
-                  _buildPrescriptionsCard(),
-                
-                SizedBox(height: 24),
-              ],
-              
-              // Action buttons
-              if (_isScanning)
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: _cancelScanning,
-                    icon: Icon(Icons.cancel),
-                    label: Text('Cancel Scanning'),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                    ),
-                  ),
-                )
-              else if (_success && _patientData != null)
-                _buildActionButtons()
-              else
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _startNFCScanning,
-                    icon: Icon(Icons.contactless),
-                    label: Text('Scan Patient Card'),
-                    style: ElevatedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
     );
   }
-  
-  Widget _buildPatientInfoCard() {
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 25,
-                  backgroundColor: Theme.of(context).primaryColor,
-                  child: Text(
-                    _patientData!['name'].substring(0, 1).toUpperCase(),
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _patientData!['name'] ?? 'Unknown',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        'IC: ${_patientData!['patientId']}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            Divider(height: 24),
-            _buildInfoRow('Date of Birth', _patientData!['dateOfBirth'] ?? 'Not recorded'),
-            _buildInfoRow('Gender', _patientData!['gender'] ?? 'Not recorded'),
-            _buildInfoRow('Phone', _patientData!['phone'] ?? 'Not recorded'),
-            if (_patientData!['bloodType'] != null)
-              _buildInfoRow('Blood Type', _patientData!['bloodType'], 
-                  valueColor: Colors.red[700]),
-          ],
-        ),
-      ),
-    );
-  }
-  
-  Widget _buildAssignmentInfoCard() {
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.assignment_ind, color: Colors.green),
-                SizedBox(width: 8),
-                Text(
-                  'Current Assignment',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green[800],
-                  ),
-                ),
-              ],
-            ),
-            Divider(),
-            _buildInfoRow('Doctor', _assignmentInfo!['doctorName'] ?? 'Unknown'),
-            if (_assignmentInfo!['doctorSpecialization'] != null)
-              _buildInfoRow('Specialization', _assignmentInfo!['doctorSpecialization']),
-            _buildInfoRow('Room', _assignmentInfo!['roomNumber'] ?? 'Not assigned'),
-            if (_assignmentInfo!['notes'] != null && _assignmentInfo!['notes'].toString().isNotEmpty)
-              _buildInfoRow('Notes', _assignmentInfo!['notes']),
-          ],
-        ),
-      ),
-    );
-  }
-  
-  Widget _buildPrescriptionsCard() {
-    final pendingPrescriptions = _prescriptions!.where((p) => p['status'] == 'pending').toList();
-    final completedPrescriptions = _prescriptions!.where((p) => p['status'] != 'pending').toList();
-    
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.medication, color: Colors.blue),
-                SizedBox(width: 8),
-                Text(
-                  'Prescriptions (${_prescriptions!.length})',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue[800],
-                  ),
-                ),
-              ],
-            ),
-            Divider(),
-            
-            if (pendingPrescriptions.isNotEmpty) ...[
-              Text(
-                'Pending (${pendingPrescriptions.length})',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.orange[700],
-                ),
-              ),
-              SizedBox(height: 8),
-              ...pendingPrescriptions.take(2).map((prescription) => 
-                _buildPrescriptionSummary(prescription)),
-            ],
-            
-            if (completedPrescriptions.isNotEmpty) ...[
-              SizedBox(height: 12),
-              Text(
-                'Completed (${completedPrescriptions.length})',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green[700],
-                ),
-              ),
-              SizedBox(height: 8),
-              ...completedPrescriptions.take(2).map((prescription) => 
-                _buildPrescriptionSummary(prescription)),
-            ],
-            
-            if (_prescriptions!.length > 4) ...[
-              SizedBox(height: 8),
-              Text(
-                'And ${_prescriptions!.length - 4} more prescriptions...',
-                style: TextStyle(
-                  fontStyle: FontStyle.italic,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-  
-  Widget _buildPrescriptionSummary(Map<String, dynamic> prescription) {
-    final status = prescription['status'] ?? 'pending';
-    final color = status == 'pending' ? Colors.orange : 
-                  status == 'dispensed' ? Colors.blue : Colors.green;
-    
+
+  Widget _buildScanningArea() {
     return Container(
-      margin: EdgeInsets.only(bottom: 8),
-      padding: EdgeInsets.all(8),
+      width: double.infinity,
+      padding: EdgeInsets.all(30),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 2,
+            blurRadius: 10,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // NFC Animation
+          AnimatedBuilder(
+            animation: _pulseAnimation,
+            builder: (context, child) {
+              return Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _isScanning 
+                      ? _getRoleColor().withOpacity(0.1 + (_pulseAnimation.value * 0.3))
+                      : Colors.grey.withOpacity(0.1),
+                  border: Border.all(
+                    color: _isScanning ? _getRoleColor() : Colors.grey,
+                    width: 2,
+                  ),
+                ),
+                child: Icon(
+                  Icons.contactless,
+                  size: 60,
+                  color: _isScanning ? _getRoleColor() : Colors.grey,
+                ),
+              );
+            },
+          ),
+          
+          SizedBox(height: 20),
+          
+          Text(
+            _statusMessage,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+              color: Colors.black87,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          
+          SizedBox(height: 20),
+          
+          // Scan Button
+          if (!_isScanning)
+            ElevatedButton.icon(
+              onPressed: _nfcAvailable ? _startScanning : null,
+              icon: Icon(Icons.contactless),
+              label: Text('Start Scanning'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _getRoleColor(),
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(25),
+                ),
+              ),
+            )
+          else
+            ElevatedButton.icon(
+              onPressed: _stopScanning,
+              icon: Icon(Icons.stop),
+              label: Text('Stop Scanning'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(25),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPatientInfo() {
+    return Container(
+      width: double.infinity,
+      margin: EdgeInsets.only(bottom: 20),
+      padding: EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.green.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.green),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(
-                child: Text(
-                  prescription['diagnosis'] ?? 'No diagnosis',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  status.toUpperCase(),
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                  ),
+              Icon(Icons.person, color: Colors.green),
+              SizedBox(width: 10),
+              Text(
+                'Patient Information',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.green[800],
                 ),
               ),
             ],
           ),
-          if (prescription['medications'] != null) ...[
-            SizedBox(height: 4),
-            Text(
-              '${(prescription['medications'] as List).length} medication(s)',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[700],
-              ),
-            ),
-          ],
+          SizedBox(height: 15),
+          _buildInfoRow('Name', _patientData!['name'] ?? 'Unknown'),
+          _buildInfoRow('IC Number', _patientData!['icNumber'] ?? _patientData!['patientId'] ?? 'Unknown'),
+          _buildInfoRow('Phone', _patientData!['phone'] ?? 'Not provided'),
+          _buildInfoRow('Gender', _patientData!['gender'] ?? 'Not specified'),
+          
+          SizedBox(height: 15),
+          
+          // Role-specific action buttons
+          _buildRoleSpecificActions(),
         ],
       ),
     );
   }
-  
-  Widget _buildActionButtons() {
-    List<Widget> buttons = [];
-    
-    if (widget.userRole == 'doctor' && _canPerformActions()) {
-      buttons.add(
-        ElevatedButton.icon(
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => PrescriptionForm(
-                  patientId: _patientData!['patientId'],
-                  patientName: _patientData!['name'],
-                ),
-              ),
-            );
-          },
-          icon: Icon(Icons.medication),
-          label: Text('Create Prescription'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green,
-            foregroundColor: Colors.white,
-          ),
-        ),
-      );
-    }
-    
-    if (widget.userRole == 'nurse') {
-      if (_assignmentInfo == null) {
-        buttons.add(
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => AssignDoctorScreen(
-                    patientId: _patientData!['patientId'],
-                    patientName: _patientData!['name'],
-                  ),
-                ),
-              );
-            },
-            icon: Icon(Icons.assignment_ind),
-            label: Text('Assign Doctor'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue,
-              foregroundColor: Colors.white,
-            ),
-          ),
-        );
-      }
-    }
-    
-    buttons.add(
-      OutlinedButton.icon(
-        onPressed: () {
-          setState(() {
-            _cardId = null;
-            _patientData = null;
-            _prescriptions = null;
-            _assignmentInfo = null;
-            _success = false;
-            _statusMessage = 'Tap "Scan Patient Card" to begin';
-          });
-        },
-        icon: Icon(Icons.refresh),
-        label: Text('Scan Another'),
-      ),
-    );
-    
-    return Column(
-      children: buttons.map((button) => 
-        Padding(
-          padding: EdgeInsets.only(bottom: 8),
-          child: SizedBox(width: double.infinity, child: button),
-        )
-      ).toList(),
-    );
-  }
-  
-  Widget _buildInfoRow(String label, String value, {Color? valueColor}) {
+
+  Widget _buildInfoRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
+      padding: EdgeInsets.only(bottom: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -769,7 +517,6 @@ class _EnhancedNFCPatientScannerState extends State<EnhancedNFCPatientScanner>
               style: TextStyle(
                 fontWeight: FontWeight.w500,
                 color: Colors.grey[700],
-                fontSize: 13,
               ),
             ),
           ),
@@ -777,14 +524,261 @@ class _EnhancedNFCPatientScannerState extends State<EnhancedNFCPatientScanner>
             child: Text(
               value,
               style: TextStyle(
-                color: valueColor ?? Colors.black87,
-                fontSize: 13,
-                fontWeight: valueColor != null ? FontWeight.bold : FontWeight.normal,
+                color: Colors.black87,
               ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildRoleSpecificActions() {
+    return Row(
+      children: [
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => PatientDetailsScreen(
+                    patient: _patientData!,
+                  ),
+                ),
+              );
+            },
+            icon: Icon(Icons.visibility),
+            label: Text('View Details'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ),
+        
+        if (widget.userRole == 'doctor') ...[
+          SizedBox(width: 10),
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => PrescriptionForm(
+                      patientId: _patientData!['patientId'],
+                      patientName: _patientData!['name'],
+                      doctorId: widget.userId,
+                      doctorName: widget.userName,
+                    ),
+                  ),
+                );
+              },
+              icon: Icon(Icons.medical_services),
+              label: Text('Prescribe'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildPatientHistory() {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 2,
+            blurRadius: 10,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.history, color: _getRoleColor()),
+              SizedBox(width: 10),
+              Text(
+                'Patient History (${_patientHistory.length})',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: _getRoleColor(),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 15),
+          
+          ...List.generate(
+            _patientHistory.length > 5 ? 5 : _patientHistory.length,
+            (index) => _buildHistoryItem(_patientHistory[index]),
+          ),
+          
+          if (_patientHistory.length > 5)
+            Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Text(
+                'Showing latest 5 of ${_patientHistory.length} records',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryItem(Map<String, dynamic> item) {
+    final isPresciption = item['type'] == 'prescription';
+    final date = item['createdAt'] ?? item['appointmentDate'] ?? DateTime.now();
+    
+    return Container(
+      margin: EdgeInsets.only(bottom: 10),
+      padding: EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isPresciption ? Icons.medication : Icons.calendar_today,
+                size: 16,
+                color: isPresciption ? Colors.purple : Colors.blue,
+              ),
+              SizedBox(width: 5),
+              Text(
+                isPresciption ? 'Prescription' : 'Appointment',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: isPresciption ? Colors.purple : Colors.blue,
+                  fontSize: 14,
+                ),
+              ),
+              Spacer(),
+              Text(
+                '${date.day}/${date.month}/${date.year}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 5),
+          if (isPresciption) ...[
+            Text(
+              'Diagnosis: ${item['diagnosis'] ?? 'Not specified'}',
+              style: TextStyle(fontSize: 13),
+            ),
+            if (item['medications'] != null && item['medications'].isNotEmpty)
+              Text(
+                'Medications: ${item['medications'].length} prescribed',
+                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+              ),
+          ] else ...[
+            Text(
+              'Doctor: ${item['doctorName'] ?? 'Unknown'}',
+              style: TextStyle(fontSize: 13),
+            ),
+            Text(
+              'Status: ${item['status'] ?? 'Unknown'}',
+              style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorDisplay() {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.red.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.red),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.error, color: Colors.red, size: 50),
+          SizedBox(height: 10),
+          Text(
+            'Error',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.red,
+            ),
+          ),
+          SizedBox(height: 10),
+          Text(
+            _error!,
+            style: TextStyle(color: Colors.red[700]),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getRoleTitle() {
+    switch (widget.userRole) {
+      case 'doctor':
+        return 'Doctor';
+      case 'nurse':
+        return 'Nurse';
+      case 'pharmacist':
+        return 'Pharmacist';
+      default:
+        return 'Staff';
+    }
+  }
+
+  Color _getRoleColor() {
+    switch (widget.userRole) {
+      case 'doctor':
+        return Colors.blue;
+      case 'nurse':
+        return Colors.green;
+      case 'pharmacist':
+        return Colors.purple;
+      default:
+        return Colors.teal;
+    }
+  }
+
+  IconData _getRoleIcon() {
+    switch (widget.userRole) {
+      case 'doctor':
+        return Icons.medical_services;
+      case 'nurse':
+        return Icons.local_hospital;
+      case 'pharmacist':
+        return Icons.medication;
+      default:
+        return Icons.person;
+    }
   }
 }

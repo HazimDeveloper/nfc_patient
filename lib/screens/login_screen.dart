@@ -12,6 +12,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _icController = TextEditingController();
+  final _nameController = TextEditingController(); // ADDED: Name controller
 
   bool _isLoading = false;
   bool _isLogin = true; // toggle between login and register
@@ -24,6 +25,7 @@ class _LoginScreenState extends State<LoginScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _icController.dispose();
+    _nameController.dispose(); // ADDED: Dispose name controller
     super.dispose();
   }
 
@@ -32,6 +34,10 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() {
       _isLogin = !_isLogin;
       _errorMessage = '';
+      // Clear name field when switching to login
+      if (_isLogin) {
+        _nameController.clear();
+      }
     });
   }
 
@@ -43,10 +49,11 @@ class _LoginScreenState extends State<LoginScreen> {
       _emailController.clear();
       _passwordController.clear();
       _icController.clear();
+      _nameController.clear(); // Clear name field too
     });
   }
 
-  // Handle form submission
+  // FIXED: Handle form submission with name validation
   Future<void> _submitForm() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -62,25 +69,29 @@ class _LoginScreenState extends State<LoginScreen> {
       
       if (_isPatientLogin) {
         // Patient login using IC number
+        print('Attempting patient login with IC: ${_icController.text.trim()}');
         await authService.signInPatientWithIC(_icController.text.trim());
       } else {
         if (_isLogin) {
           // Staff login
+          print('Attempting staff login with email: ${_emailController.text.trim()}');
           await authService.signInWithEmailAndPassword(
             _emailController.text.trim(), 
             _passwordController.text,
           );
         } else {
-          // Staff register
+          // FIXED: Staff register with name
+          print('Attempting staff registration with name: ${_nameController.text.trim()}');
           await authService.registerWithEmailAndPassword(
             _emailController.text.trim(),
             _passwordController.text,
-            'New User',
+            _nameController.text.trim(), // ADDED: Use actual name input
             _selectedRole,
           );
         }
       }
     } catch (e) {
+      print('Login/Registration error: ${e.toString()}');
       setState(() {
         _errorMessage = e.toString();
       });
@@ -117,6 +128,27 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   SizedBox(height: 24),
                   
+                  // App Title
+                  Text(
+                    'NFC Patient Registration',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).primaryColor,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'Hospital Management System',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.grey[600],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  SizedBox(height: 32),
+                  
                   // Login type toggle
                   Container(
                     decoration: BoxDecoration(
@@ -127,7 +159,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       children: [
                         Expanded(
                           child: GestureDetector(
-                            onTap: () => setState(() => _isPatientLogin = false),
+                            onTap: () => setState(() {
+                              _isPatientLogin = false;
+                              _errorMessage = '';
+                              _clearAllFields();
+                            }),
                             child: Container(
                               padding: EdgeInsets.symmetric(vertical: 12),
                               decoration: BoxDecoration(
@@ -147,7 +183,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         Expanded(
                           child: GestureDetector(
-                            onTap: () => setState(() => _isPatientLogin = true),
+                            onTap: () => setState(() {
+                              _isPatientLogin = true;
+                              _errorMessage = '';
+                              _clearAllFields();
+                            }),
                             child: Container(
                               padding: EdgeInsets.symmetric(vertical: 12),
                               decoration: BoxDecoration(
@@ -198,8 +238,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   SizedBox(height: 32),
                   
-                  // Patient IC field or Staff email/password
+                  // Form fields based on login type
                   if (_isPatientLogin) ...[
+                    // Patient IC field
                     TextFormField(
                       controller: _icController,
                       decoration: InputDecoration(
@@ -208,7 +249,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        helperText: 'Enter your IC number (same as on your NFC card)',
+                        helperText: 'Enter your IC number to access your medical records',
                       ),
                       validator: (value) {
                         if (value == null || value.isEmpty) {
@@ -221,6 +262,33 @@ class _LoginScreenState extends State<LoginScreen> {
                       },
                     ),
                   ] else ...[
+                    // Staff login/registration fields
+                    
+                    // ADDED: Name field for registration only
+                    if (!_isLogin) ...[
+                      TextFormField(
+                        controller: _nameController,
+                        decoration: InputDecoration(
+                          labelText: 'Full Name *',
+                          prefixIcon: Icon(Icons.person),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          helperText: 'Enter your full name as it appears on official documents',
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Please enter your full name';
+                          }
+                          if (value.trim().length < 2) {
+                            return 'Name must be at least 2 characters';
+                          }
+                          return null;
+                        },
+                      ),
+                      SizedBox(height: 16),
+                    ],
+                    
                     // Email field
                     TextFormField(
                       controller: _emailController,
@@ -273,7 +341,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         value: _selectedRole,
                         decoration: InputDecoration(
                           labelText: 'Role',
-                          prefixIcon: Icon(Icons.person),
+                          prefixIcon: Icon(Icons.work),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -281,15 +349,33 @@ class _LoginScreenState extends State<LoginScreen> {
                         items: <DropdownMenuItem<String>>[
                           DropdownMenuItem<String>(
                             value: 'doctor',
-                            child: Text('Doctor'),
+                            child: Row(
+                              children: [
+                                Icon(Icons.medical_services, size: 20, color: Colors.blue),
+                                SizedBox(width: 8),
+                                Text('Doctor'),
+                              ],
+                            ),
                           ),
                           DropdownMenuItem<String>(
                             value: 'nurse',
-                            child: Text('Nurse'),
+                            child: Row(
+                              children: [
+                                Icon(Icons.local_hospital, size: 20, color: Colors.green),
+                                SizedBox(width: 8),
+                                Text('Nurse'),
+                              ],
+                            ),
                           ),
                           DropdownMenuItem<String>(
                             value: 'pharmacist',
-                            child: Text('Pharmacist'),
+                            child: Row(
+                              children: [
+                                Icon(Icons.medication, size: 20, color: Colors.purple),
+                                SizedBox(width: 8),
+                                Text('Pharmacist'),
+                              ],
+                            ),
                           ),
                         ],
                         onChanged: (String? value) {
@@ -321,13 +407,20 @@ class _LoginScreenState extends State<LoginScreen> {
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(color: Colors.red),
                         ),
-                        child: Text(
-                          _errorMessage,
-                          style: TextStyle(
-                            color: Colors.red,
-                            fontSize: 14,
-                          ),
-                          textAlign: TextAlign.center,
+                        child: Row(
+                          children: [
+                            Icon(Icons.error, color: Colors.red, size: 20),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _errorMessage,
+                                style: TextStyle(
+                                  color: Colors.red,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -335,16 +428,24 @@ class _LoginScreenState extends State<LoginScreen> {
                   SizedBox(height: 16),
                   
                   // Submit button
-                  ElevatedButton(
+                  ElevatedButton.icon(
                     onPressed: _isLoading ? null : _submitForm,
-                    child: _isLoading
-                        ? CircularProgressIndicator(color: Colors.white)
-                        : Text(
-                            _isPatientLogin 
-                                ? 'Access My Information'
-                                : _isLogin ? 'Sign In' : 'Register',
-                            style: TextStyle(fontSize: 16),
-                          ),
+                    icon: _isLoading
+                        ? SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : Icon(_getSubmitIcon()),
+                    label: Text(
+                      _isLoading 
+                          ? (_isPatientLogin ? 'Accessing...' : _isLogin ? 'Signing In...' : 'Registering...')
+                          : (_isPatientLogin ? 'Access My Information' : _isLogin ? 'Sign In' : 'Register'),
+                      style: TextStyle(fontSize: 16),
+                    ),
                     style: ElevatedButton.styleFrom(
                       padding: EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
@@ -394,7 +495,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                           SizedBox(height: 8),
                           Text(
-                            'Use the same IC number that was registered with your NFC card to view your medical information and appointments.',
+                            'Enter your IC number to view your medical information and appointments. This is the same IC number you provided during registration with the nurse.',
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.blue[700],
@@ -404,6 +505,46 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ],
+                  
+                  // Registration help text for staff
+                  if (!_isPatientLogin && !_isLogin) ...[
+                    SizedBox(height: 24),
+                    Container(
+                      padding: EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.green.withOpacity(0.3)),
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.people, color: Colors.green, size: 20),
+                              SizedBox(width: 8),
+                              Text(
+                                'Staff Registration',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.green[800],
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            'Register as hospital staff to access the management system. Choose your role carefully as it determines your access permissions.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.green[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  
+                  SizedBox(height: 16),
                 ],
               ),
             ),
@@ -411,5 +552,24 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       ),
     );
+  }
+  
+  // Helper method to get appropriate icon for submit button
+  IconData _getSubmitIcon() {
+    if (_isPatientLogin) {
+      return Icons.person;
+    } else if (_isLogin) {
+      return Icons.login;
+    } else {
+      return Icons.person_add;
+    }
+  }
+  
+  // Helper method to clear all form fields
+  void _clearAllFields() {
+    _emailController.clear();
+    _passwordController.clear();
+    _icController.clear();
+    _nameController.clear();
   }
 }

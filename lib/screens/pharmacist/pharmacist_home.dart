@@ -45,7 +45,7 @@ class _PharmacistHomeState extends State<PharmacistHome> with SingleTickerProvid
       // Load prescriptions and statistics in parallel
       final results = await Future.wait([
         _databaseService.getPrescriptionsByStatus('pending'),
-        _databaseService.getCompletedPrescriptions(limit: 50), // Limit to recent 50
+        _databaseService.getCompletedPrescriptions(limit: 50), // Recent 50
         _databaseService.getPrescriptionStatistics(),
       ]);
       
@@ -90,9 +90,10 @@ class _PharmacistHomeState extends State<PharmacistHome> with SingleTickerProvid
               icon: Icon(Icons.pending_actions),
               text: 'Pending (${_statistics['pending'] ?? 0})',
             ),
+            // FIXED: Show total completed instead of just today
             Tab(
               icon: Icon(Icons.check_circle),
-              text: 'Completed (${_statistics['completedToday'] ?? 0} today)',
+              text: 'Completed (${_completedPrescriptions.length})',
             ),
           ],
           labelColor: Colors.white,
@@ -102,7 +103,7 @@ class _PharmacistHomeState extends State<PharmacistHome> with SingleTickerProvid
       ),
       body: Column(
         children: [
-          // Statistics bar
+          // FIXED: Updated statistics bar
           _buildStatisticsBar(),
           
           // Tab content
@@ -122,13 +123,15 @@ class _PharmacistHomeState extends State<PharmacistHome> with SingleTickerProvid
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _scanPatientCard,
-        icon: Icon(Icons.contactless),
-        label: Text('Scan Patient Card'),
+        icon: Icon(Icons.contactless,color: Colors.white,),
+        // FIXED: Updated label for clarity
+        label: Text('Scan Patient Card',style: TextStyle(color:Colors.white),),
         backgroundColor: Theme.of(context).primaryColor,
       ),
     );
   }
   
+  // FIXED: Updated statistics bar with clearer labels
   Widget _buildStatisticsBar() {
     if (_isLoading) {
       return Container(
@@ -158,11 +161,19 @@ class _PharmacistHomeState extends State<PharmacistHome> with SingleTickerProvid
             label: 'Dispensed',
             color: Colors.blue,
           ),
+          // FIXED: Show today's completed separately from total
+          _buildStatCard(
+            icon: Icons.today,
+            value: (_statistics['completedToday'] ?? 0).toString(),
+            label: 'Today',
+            color: Colors.green,
+          ),
+          // FIXED: Show total completed
           _buildStatCard(
             icon: Icons.check_circle,
-            value: (_statistics['completedToday'] ?? 0).toString(),
-            label: 'Completed Today',
-            color: Colors.green,
+            value: _completedPrescriptions.length.toString(),
+            label: 'Total Done',
+            color: Colors.purple,
           ),
         ],
       ),
@@ -276,13 +287,58 @@ class _PharmacistHomeState extends State<PharmacistHome> with SingleTickerProvid
       );
     }
 
-    return ListView.builder(
+    // FIXED: Group prescriptions by date for better organization
+    return ListView(
       padding: EdgeInsets.all(16),
-      itemCount: _completedPrescriptions.length,
-      itemBuilder: (context, index) {
-        final prescription = _completedPrescriptions[index];
-        return _buildPrescriptionCard(prescription, isPending: false);
-      },
+      children: [
+        // FIXED: Add summary info at the top
+        Container(
+          padding: EdgeInsets.all(16),
+          margin: EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            color: Colors.green.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.green.withOpacity(0.3)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.info, color: Colors.green),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Completed Prescriptions',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green[800],
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Total: ${_completedPrescriptions.length} | Today: ${_statistics['completedToday'] ?? 0}',
+                      style: TextStyle(
+                        color: Colors.green[700],
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        // List of completed prescriptions
+        ...List.generate(
+          _completedPrescriptions.length,
+          (index) {
+            final prescription = _completedPrescriptions[index];
+            return _buildPrescriptionCard(prescription, isPending: false);
+          },
+        ),
+      ],
     );
   }
   
@@ -320,10 +376,23 @@ class _PharmacistHomeState extends State<PharmacistHome> with SingleTickerProvid
         ? '${prescription.medications[0].name}, ${prescription.medications[1].name}, and ${prescription.medications.length - 2} more'
         : prescription.medications.map((med) => med.name).join(', ');
     
-    // Format timestamp
+    // Format timestamp with better date display
     final timestamp = isPending ? prescription.createdAt : prescription.updatedAt;
-    final formattedDate = '${timestamp.day}/${timestamp.month}/${timestamp.year}';
-    final formattedTime = '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final prescriptionDate = DateTime(timestamp.year, timestamp.month, timestamp.day);
+    
+    String formattedDate;
+    String formattedTime = '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}';
+    
+    // FIXED: Better date formatting
+    if (prescriptionDate == today) {
+      formattedDate = 'Today';
+    } else if (prescriptionDate == today.subtract(Duration(days: 1))) {
+      formattedDate = 'Yesterday';
+    } else {
+      formattedDate = '${timestamp.day}/${timestamp.month}/${timestamp.year}';
+    }
     
     // Status color
     Color statusColor;
@@ -403,12 +472,34 @@ class _PharmacistHomeState extends State<PharmacistHome> with SingleTickerProvid
                           ),
                         ),
                         SizedBox(height: 2),
-                        Text(
-                          '${isPending ? 'Prescribed' : 'Completed'}: $formattedDate at $formattedTime',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[500],
-                          ),
+                        // FIXED: Better date/time display
+                        Row(
+                          children: [
+                            Text(
+                              '${isPending ? 'Prescribed' : 'Completed'}: ',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[500],
+                              ),
+                            ),
+                            Text(
+                              formattedDate,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: formattedDate == 'Today' ? Colors.green[600] : 
+                                       formattedDate == 'Yesterday' ? Colors.orange[600] : 
+                                       Colors.grey[500],
+                                fontWeight: formattedDate == 'Today' ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                            Text(
+                              ' at $formattedTime',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[500],
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

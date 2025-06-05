@@ -159,25 +159,25 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
                     ),
                     SizedBox(height: 20),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
-                      children: [
-                        _buildProfileStat(
-                          icon: Icons.numbers,
-                          label: 'Patient ID',
-                          value: patient['patientId']?.substring(0, 8) ?? 'Unknown',
-                        ),
-                        _buildProfileStat(
-                          icon: Icons.calendar_today,
-                          label: 'Age',
-                          value: _calculateAge(patient['dateOfBirth']) ?? 'Unknown',
-                        ),
-                        _buildProfileStat(
-                          icon: Icons.wc,
-                          label: 'Gender',
-                          value: patient['gender'] ?? 'Unknown',
-                        ),
-                      ],
-                    ),
+  mainAxisAlignment: MainAxisAlignment.spaceAround,
+  children: [
+    _buildProfileStat(
+      icon: Icons.credit_card, // CHANGED: Use credit card icon for IC
+      label: 'IC Number',
+      value: patient['icNumber']?.substring(0, 8) ?? patient['patientId']?.substring(0, 8) ?? 'Unknown',
+    ),
+    _buildProfileStat(
+      icon: Icons.calendar_today,
+      label: 'Age',
+      value: _calculateAge(patient['dateOfBirth']) ?? 'Unknown',
+    ),
+    _buildProfileStat(
+      icon: Icons.wc,
+      label: 'Gender',
+      value: patient['gender'] ?? 'Unknown',
+    ),
+  ],
+),
                   ],
                 ),
               ),
@@ -186,21 +186,27 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
             SizedBox(height: 20),
 
             // Basic Information
-            _buildSection(
-              title: 'Basic Information',
-              icon: Icons.person,
-              child: Column(
-                children: [
-                  _buildDetailRow('Full Name', patient['name'] ?? 'Not recorded'),
-                  _buildDetailRow('Email', patient['email'] ?? 'Not recorded'),
-                  _buildDetailRow('Phone', patient['phone'] ?? 'Not recorded'),
-                  _buildDetailRow('Date of Birth', patient['dateOfBirth'] ?? 'Not recorded'),
-                  _buildDetailRow('Gender', patient['gender'] ?? 'Not recorded'),
-                  _buildDetailRow('Address', patient['address'] ?? 'Not recorded'),
-                  _buildDetailRow('Registration Date', formattedRegDate),
-                ],
-              ),
-            ),
+           _buildSection(
+  title: 'Basic Information',
+  icon: Icons.person,
+  child: Column(
+    children: [
+      _buildDetailRow('Full Name', patient['name'] ?? 'Not recorded'),
+      // ADDED: IC Number display
+      _buildDetailRow(
+        'IC Number', 
+        patient['icNumber'] ?? patient['patientId'] ?? 'Not recorded',
+        valueColor: Colors.blue[700],
+      ),
+      _buildDetailRow('Email', patient['email'] ?? 'Not recorded'),
+      _buildDetailRow('Phone', patient['phone'] ?? 'Not recorded'),
+      _buildDetailRow('Date of Birth', patient['dateOfBirth'] ?? 'Not recorded'),
+      _buildDetailRow('Gender', patient['gender'] ?? 'Not recorded'),
+      _buildDetailRow('Address', patient['address'] ?? 'Not recorded'),
+      _buildDetailRow('Registration Date', formattedRegDate),
+    ],
+  ),
+),
 
             SizedBox(height: 20),
 

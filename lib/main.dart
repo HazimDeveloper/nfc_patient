@@ -65,6 +65,8 @@ class AuthWrapper extends StatefulWidget {
 
 class _AuthWrapperState extends State<AuthWrapper> {
   bool _initialized = false;
+  String? _userRole;
+  bool _isLoadingRole = false;
 
   @override
   void initState() {
@@ -74,104 +76,152 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
   Future<void> _initializeApp() async {
     try {
-      final authService = Provider.of<AuthService>(context, listen: false);
-      await authService;
+      // Simple initialization - just mark as initialized after a small delay
+      await Future.delayed(Duration(milliseconds: 500)); // Small delay for smooth transition
       
-      setState(() {
-        _initialized = true;
-      });
+      if (mounted) {
+        setState(() {
+          _initialized = true;
+        });
+      }
     } catch (e) {
       print('Error initializing app: $e');
-      setState(() {
-        _initialized = true;
-      });
+      if (mounted) {
+        setState(() {
+          _initialized = true;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadUserRole(AuthService authService) async {
+    // Prevent multiple simultaneous calls
+    if (_isLoadingRole) return;
+    
+    setState(() {
+      _isLoadingRole = true;
+    });
+    
+    try {
+      final role = await authService.getUserRole();
+      if (mounted) {
+        setState(() {
+          _userRole = role;
+          _isLoadingRole = false;
+        });
+      }
+    } catch (e) {
+      print('Error getting user role: $e');
+      if (mounted) {
+        setState(() {
+          _userRole = 'patient'; // Default fallback
+          _isLoadingRole = false;
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Show loading screen during app initialization
     if (!_initialized) {
       return Scaffold(
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              CircularProgressIndicator(),
+              CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.teal),
+              ),
               SizedBox(height: 16),
-              Text('Initializing Hospital System...'),
+              Text(
+                'Initializing Hospital System...',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.grey[600],
+                ),
+              ),
             ],
           ),
         ),
       );
     }
 
-    final authService = Provider.of<AuthService>(context);
-    
-    return StreamBuilder(
-      stream: authService.userStream,
-      builder: (_, AsyncSnapshot snapshot) {
-        if (snapshot.connectionState == ConnectionState.active) {
-          final userData = snapshot.data;
-          
-          if (userData == null) {
-            return LoginScreen();
+    return Consumer<AuthService>(
+      builder: (context, authService, child) {
+        // Check authentication status
+        final currentUser = authService.currentUser;
+        final hasPatientSession = authService.currentPatientSession != null;
+        
+        // If no user is logged in, show login screen
+        if (currentUser == null && !hasPatientSession) {
+          // Reset role state when user logs out
+          if (_userRole != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              setState(() {
+                _userRole = null;
+                _isLoadingRole = false;
+              });
+            });
           }
-          
-          // Check if it's a patient session
-          if (userData['isPatient'] == true) {
-            return PatientHome();
-          }
-          
-          // For staff users, check role
-          return FutureBuilder(
-            future: authService.getUserRole(),
-            builder: (context, roleSnapshot) {
-              if (roleSnapshot.connectionState == ConnectionState.done) {
-                final String role = roleSnapshot.data ?? 'patient';
-                
-                switch (role) {
-                  case 'doctor':
-                    return DoctorHome();
-                  case 'nurse':
-                    return NurseHome();
-                  case 'pharmacist':
-                    return PharmacistHome();
-                  case 'patient':
-                  default:
-                    return PatientHome();
-                }
-              }
-              
-              // While determining role, show loading
-              return Scaffold(
-                body: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 16),
-                      Text('Checking your credentials...'),
-                    ],
-                  ),
-                ),
-              );
-            },
-          );
+          return LoginScreen();
         }
         
-        // Connection to auth state not yet established
-        return Scaffold(
-          body: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Connecting to server...'),
-              ],
-            ),
-          ),
-        );
+        // If patient session exists, go directly to patient home
+        if (hasPatientSession) {
+          return PatientHome();
+        }
+        
+        // For Firebase authenticated users, determine role
+        if (currentUser != null) {
+          // If we don't have the role yet and we're not currently loading it, start loading
+          if (_userRole == null && !_isLoadingRole) {
+            // Use post frame callback to avoid calling setState during build
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _loadUserRole(authService);
+            });
+          }
+          
+          // Show loading while determining role
+          if (_isLoadingRole || _userRole == null) {
+            return Scaffold(
+              body: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.teal),
+                    ),
+                    SizedBox(height: 16),
+                    Text(
+                      'Checking your credentials...',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+          
+          // Navigate to appropriate home screen based on role
+          switch (_userRole) {
+            case 'doctor':
+              return DoctorHome();
+            case 'nurse':
+              return NurseHome();
+            case 'pharmacist':
+              return PharmacistHome();
+            case 'patient':
+            default:
+              return PatientHome();
+          }
+        }
+        
+        // Fallback - should not reach here, but show login if it does
+        return LoginScreen();
       },
     );
   }

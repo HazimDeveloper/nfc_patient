@@ -11,6 +11,13 @@ class AuthService with ChangeNotifier {
   // Add this property to track patient sessions
   Map<String, dynamic>? _currentPatientSession;
   
+  // FIXED: Add role caching to prevent multiple calls
+  String? _cachedUserRole;
+  String? _cachedUserId;
+  
+  // Public getter for patient session
+  Map<String, dynamic>? get currentPatientSession => _currentPatientSession;
+  
   // Get auth state changes
   Stream<User?> get user => _auth.authStateChanges();
   
@@ -22,15 +29,15 @@ class AuthService with ChangeNotifier {
     return currentUser != null || _currentPatientSession != null;
   }
   
-  // Get current user stream that includes patient sessions
+  // FIXED: Simplified userStream - only emit when auth state actually changes
   Stream<Map<String, dynamic>?> get userStream {
-    return Stream.periodic(Duration(seconds: 1), (i) {
+    return _auth.authStateChanges().map((user) {
       if (_currentPatientSession != null) {
         return _currentPatientSession;
-      } else if (currentUser != null) {
+      } else if (user != null) {
         return {
-          'uid': currentUser!.uid,
-          'email': currentUser!.email,
+          'uid': user.uid,
+          'email': user.email,
           'isPatient': false,
         };
       }
@@ -38,9 +45,16 @@ class AuthService with ChangeNotifier {
     });
   }
   
+  // Clear cached data when user changes
+  void _clearCache() {
+    _cachedUserRole = null;
+    _cachedUserId = null;
+  }
+  
   // Sign in with email and password
   Future<User?> signInWithEmailAndPassword(String email, String password) async {
     try {
+      _clearCache(); // Clear cache before sign in
       final result = await _auth.signInWithEmailAndPassword(
         email: email, 
         password: password
@@ -53,36 +67,42 @@ class AuthService with ChangeNotifier {
     }
   }
   
-  // Sign in patient with IC number
   Future<void> signInPatientWithIC(String icNumber) async {
-    try {
-      final patientData = await _databaseService.getPatientByIC(icNumber);
-      
-      if (patientData == null) {
-        throw Exception('Patient not found. Please check your IC number or contact the hospital.');
-      }
-      
-      // Create a temporary user session for patient
-      // Since patients don't have Firebase Auth accounts, we'll use a different approach
-      await _firestore.collection('patient_sessions').doc(icNumber).set({
-        'patientId': icNumber,
-        'loginTime': FieldValue.serverTimestamp(),
-        'isActive': true,
-      });
-      
-      // Store patient session locally
-      _currentPatientSession = {
-        'patientId': icNumber,
-        'isPatient': true,
-        'loginTime': DateTime.now(),
-      };
-      
-      notifyListeners();
-    } catch (e) {
-      print('Error signing in patient: ${e.toString()}');
-      rethrow;
+  try {
+    _clearCache(); // Clear cache before sign in
+    
+    // FIXED: Use getPatientByIC instead of getPatientByCardSerial
+    final patientData = await _databaseService.getPatientByIC(icNumber);
+    
+    if (patientData == null) {
+      throw Exception('Patient not found. Please check your IC number or contact the hospital registration desk.');
     }
+    
+    print('Patient found with IC: $icNumber');
+    print('Patient data: ${patientData['name']}');
+    
+    // Create a temporary user session for patient
+    await _firestore.collection('patient_sessions').doc(icNumber).set({
+      'patientId': icNumber,
+      'loginTime': FieldValue.serverTimestamp(),
+      'isActive': true,
+    });
+    
+    // Store patient session locally
+    _currentPatientSession = {
+      'patientId': icNumber,
+      'isPatient': true,
+      'loginTime': DateTime.now(),
+      'patientData': patientData, // Store patient data for easy access
+    };
+    
+    print('Patient session created successfully');
+    notifyListeners();
+  } catch (e) {
+    print('Error signing in patient: ${e.toString()}');
+    rethrow;
   }
+}
   
   // Register with email and password
   Future<User?> registerWithEmailAndPassword(
@@ -92,6 +112,8 @@ class AuthService with ChangeNotifier {
     String role
   ) async {
     try {
+      _clearCache(); // Clear cache before registration
+      
       // Create user in Firebase Auth
       final result = await _auth.createUserWithEmailAndPassword(
         email: email, 
@@ -212,24 +234,37 @@ class AuthService with ChangeNotifier {
       _currentPatientSession = null;
     }
     
+    // Clear cache
+    _clearCache();
+    
     // Sign out from Firebase
     await _auth.signOut();
     notifyListeners();
   }
   
-  // Get user role from Firestore - SIMPLIFIED and SAFE
+  // FIXED: Get user role with caching to prevent multiple calls
   Future<String> getUserRole() async {
+    // Return cached role if available and user hasn't changed
+    if (_cachedUserRole != null) {
+      return _cachedUserRole!;
+    }
+    
     // Check if it's a patient session first
     if (_currentPatientSession != null && _currentPatientSession!['isPatient'] == true) {
+      _cachedUserRole = 'patient';
       return 'patient';
     }
     
-    if (currentUser == null) return 'patient';
+    if (currentUser == null) {
+      _cachedUserRole = 'patient';
+      return 'patient';
+    }
     
     try {
       // First check if user is a patient by email
       final patientData = await _databaseService.getPatientByEmail(currentUser!.email!);
       if (patientData != null) {
+        _cachedUserRole = 'patient';
         return 'patient';
       }
       
@@ -240,22 +275,31 @@ class AuthService with ChangeNotifier {
         final userData = doc.data()!;
         final role = userData['role'];
         if (role != null && role is String) {
+          _cachedUserRole = role;
           return role;
         }
       }
       
+      _cachedUserRole = 'patient';
       return 'patient'; // Default role if nothing found
     } catch (e) {
       print('Error getting user role: ${e.toString()}');
+      _cachedUserRole = 'patient';
       return 'patient'; // Safe default
     }
   }
   
-  // Get current user ID - SIMPLIFIED and SAFE
+  // Get current user ID - SIMPLIFIED and SAFE with caching
   Future<String?> getCurrentUserId() async {
+    // Return cached ID if available
+    if (_cachedUserId != null) {
+      return _cachedUserId;
+    }
+    
     // Check if it's a patient session first
     if (_currentPatientSession != null && _currentPatientSession!['isPatient'] == true) {
-      return _currentPatientSession!['patientId'];
+      _cachedUserId = _currentPatientSession!['patientId'];
+      return _cachedUserId;
     }
     
     if (currentUser == null) return null;
@@ -266,14 +310,17 @@ class AuthService with ChangeNotifier {
       if (role == 'patient') {
         // For patients, get their IC number from database
         final patientData = await _databaseService.getPatientByEmail(currentUser!.email!);
-        return patientData?['patientId']; // This is their IC number
+        _cachedUserId = patientData?['patientId']; // This is their IC number
+        return _cachedUserId;
       } else {
         // For doctors, nurses, pharmacists - use Firebase UID
-        return currentUser!.uid;
+        _cachedUserId = currentUser!.uid;
+        return _cachedUserId;
       }
     } catch (e) {
       print('Error getting current user ID: ${e.toString()}');
-      return currentUser!.uid; // Fallback to Firebase UID
+      _cachedUserId = currentUser!.uid; // Fallback to Firebase UID
+      return _cachedUserId;
     }
   }
   

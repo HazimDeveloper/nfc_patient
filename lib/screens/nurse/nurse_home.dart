@@ -6,8 +6,6 @@ import 'package:nfc_patient_registration/screens/nurse/nfc_card_registration.dar
 import 'package:nfc_patient_registration/screens/nurse/assign_doctor.dart';
 import 'package:nfc_patient_registration/screens/nurse/nurse_patient_list_screen.dart';
 import 'package:nfc_patient_registration/screens/nurse/patient_detail_screen.dart';
-// Import the enhanced scanner
-// import 'path/to/enhanced_nfc_patient_scanner.dart';
 
 class NurseHome extends StatefulWidget {
   @override
@@ -143,8 +141,8 @@ class _NurseHomeState extends State<NurseHome> with SingleTickerProviderStateMix
             ),
           ).then((_) => _loadAllData());
         },
-        icon: Icon(Icons.person_add),
-        label: Text('Register Patient'),
+        icon: Icon(Icons.person_add,color: Colors.white,),
+        label: Text('Register Patient',style: TextStyle(color: Colors.white),),
         backgroundColor: Theme.of(context).primaryColor,
       ),
     );
@@ -688,7 +686,8 @@ class _NurseHomeState extends State<NurseHome> with SingleTickerProviderStateMix
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    'Room ${patient['roomNumber'] ?? 'N/A'}',
+                    // FIXED: Remove duplicate "Room" text
+                    patient['roomNumber'] ?? 'No Room',
                     style: TextStyle(
                       color: Colors.green,
                       fontSize: 12,
@@ -699,27 +698,84 @@ class _NurseHomeState extends State<NurseHome> with SingleTickerProviderStateMix
               ],
             ),
             SizedBox(height: 12),
+            
+            // FIXED: Show doctor name instead of ID
             if (patient['assignedDoctor'] != null)
-              Container(
-                padding: EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.medical_services, size: 16, color: Colors.blue),
-                    SizedBox(width: 8),
-                    Text(
-                      'Assigned to: ${patient['assignedDoctor']}',
-                      style: TextStyle(
-                        color: Colors.blue[800],
-                        fontWeight: FontWeight.w500,
+              FutureBuilder<Map<String, dynamic>?>(
+                future: _databaseService.getDoctorById(patient['assignedDoctor']),
+                builder: (context, snapshot) {
+                  if (snapshot.hasData && snapshot.data != null) {
+                    final doctorData = snapshot.data!;
+                    return Container(
+                      padding: EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                    ),
-                  ],
-                ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.medical_services, size: 16, color: Colors.blue),
+                          SizedBox(width: 8),
+                          Text(
+                            'Assigned to: Dr. ${doctorData['name'] ?? 'Unknown'}',
+                            style: TextStyle(
+                              color: Colors.blue[800],
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  } else if (snapshot.connectionState == ConnectionState.waiting) {
+                    return Container(
+                      padding: EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            'Loading doctor info...',
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  } else {
+                    return Container(
+                      padding: EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.warning, size: 16, color: Colors.orange),
+                          SizedBox(width: 8),
+                          Text(
+                            'Doctor info not available',
+                            style: TextStyle(
+                              color: Colors.orange[800],
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                },
               ),
+            
             SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
@@ -815,16 +871,33 @@ class _NurseHomeState extends State<NurseHome> with SingleTickerProviderStateMix
                 fontSize: 12,
               ),
             ),
+            
+            // FIXED: Show doctor name for completed patients too
             if (patient['assignedDoctor'] != null) ...[
               SizedBox(height: 4),
-              Text(
-                'Treated by: ${patient['assignedDoctor']}',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                ),
+              FutureBuilder<Map<String, dynamic>?>(
+                future: _databaseService.getDoctorById(patient['assignedDoctor']),
+                builder: (context, snapshot) {
+                  if (snapshot.hasData && snapshot.data != null) {
+                    return Text(
+                      'Treated by: Dr. ${snapshot.data!['name'] ?? 'Unknown'}',
+                      style: TextStyle(
+                        color: Colors.grey[600],
+                        fontSize: 12,
+                      ),
+                    );
+                  }
+                  return Text(
+                    'Treated by: Loading...',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                    ),
+                  );
+                },
               ),
             ],
+            
             SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
@@ -896,21 +969,6 @@ class _NurseHomeState extends State<NurseHome> with SingleTickerProviderStateMix
 
   // Enhanced NFC scanning method
   void _handleNFCScan() {
-    // Option 1: Use the enhanced scanner (uncomment when you add the import)
-    /*
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => EnhancedNFCPatientScanner(
-          userRole: 'nurse',
-          userId: 'nurse1', // Get from auth service
-          userName: 'Nurse', // Get from auth service  
-        ),
-      ),
-    ).then((_) => _loadAllData());
-    */
-    
-    // Option 2: Use existing NFC card registration
     Navigator.push(
       context,
       MaterialPageRoute(

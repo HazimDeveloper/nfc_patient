@@ -52,34 +52,34 @@ class DatabaseService {
   
   // Simple check if NFC card is already registered
   Future<Map<String, dynamic>?> checkCardRegistration(String cardSerialNumber) async {
-    try {
-      if (cardSerialNumber.isEmpty) {
-        return null;
-      }
-      
-      print('Checking card registration: $cardSerialNumber');
-      
-      // Check if patient exists with this card serial number
-      final patientData = await getPatientByIC(cardSerialNumber);
-      
-      if (patientData != null) {
-        return {
-          'isRegistered': true,
-          'patientData': patientData,
-          'message': 'Card is already registered to ${patientData['name']}',
-        };
-      }
-      
-      return {
-        'isRegistered': false,
-        'message': 'Card is available for registration',
-      };
-      
-    } catch (e) {
-      print('Error checking card registration: ${e.toString()}');
-      rethrow;
+  try {
+    if (cardSerialNumber.isEmpty) {
+      return null;
     }
+    
+    print('Checking card registration: $cardSerialNumber');
+    
+    // Check if any patient exists with this card serial number
+    final existingPatient = await _getPatientByCardSerial(cardSerialNumber);
+    
+    if (existingPatient != null) {
+      return {
+        'isRegistered': true,
+        'patientData': existingPatient,
+        'message': 'Card is already registered to ${existingPatient['name']}',
+      };
+    }
+    
+    return {
+      'isRegistered': false,
+      'message': 'Card is available for registration',
+    };
+    
+  } catch (e) {
+    print('Error checking card registration: ${e.toString()}');
+    rethrow;
   }
+}
   
   // Simple patient registration
   Future<Map<String, dynamic>> registerPatient({
@@ -158,30 +158,236 @@ class DatabaseService {
       rethrow;
     }
   }
+
+  // ADD this new method to your database_service.dart file
+
+// SIMPLE: Register patient with IC number
+Future<Map<String, dynamic>> registerPatientWithIC({
+  required String icNumber,
+  required String name,
+  required String email,
+  required String phone,
+  required String dateOfBirth,
+  required String gender,
+  required String address,
+  String? bloodType,
+  String? emergencyContact,
+  required String cardSerialNumber,
+}) async {
+  try {
+    print('Starting patient registration with IC: $icNumber');
+    
+    // FIXED: Check if IC number already exists
+    final existingPatientByIC = await getPatientByIC(icNumber);
+    if (existingPatientByIC != null) {
+      throw Exception('IC number $icNumber is already registered to ${existingPatientByIC['name']}');
+    }
+    
+    // FIXED: Check if card is already used by another patient
+    final existingPatientByCard = await _getPatientByCardSerial(cardSerialNumber);
+    if (existingPatientByCard != null) {
+      throw Exception('This NFC card is already registered to ${existingPatientByCard['name']}');
+    }
+    
+    // Use IC number as patient ID (simple approach)
+    final patientId = icNumber;
+    
+    final patientData = {
+      'patientId': patientId,
+      'icNumber': icNumber, // Store IC number separately
+      'name': name,
+      'email': email,
+      'phone': phone,
+      'dateOfBirth': dateOfBirth,
+      'gender': gender,
+      'address': address,
+      'bloodType': bloodType,
+      'emergencyContact': emergencyContact,
+      'allergies': [], // Empty by default
+      'medications': [], // Empty by default
+      'conditions': [], // Empty by default
+      'cardSerialNumber': cardSerialNumber,
+      'registrationDate': FieldValue.serverTimestamp(),
+      'lastUpdated': FieldValue.serverTimestamp(),
+      'currentAppointment': null,
+      'assignedDoctor': null,
+      'assignedRoom': null,
+      'status': 'registered',
+    };
+    
+    // Save to database using IC as document ID
+    await patientsCollection.doc(patientId).set(patientData);
+    
+    print('Patient registration completed: $patientId');
+    
+    return {
+      'patientId': patientId,
+      'icNumber': icNumber,
+      'name': name,
+      'dateOfBirth': dateOfBirth,
+      'cardSerialNumber': cardSerialNumber,
+      'registrationTimestamp': DateTime.now().toIso8601String(),
+    };
+    
+  } catch (e) {
+    print('Patient registration failed: ${e.toString()}');
+    rethrow;
+  }
+}
+
+// FIXED: Helper method to get patient by card serial number
+Future<Map<String, dynamic>?> _getPatientByCardSerial(String cardSerialNumber) async {
+  try {
+    final snapshot = await patientsCollection
+        .where('cardSerialNumber', isEqualTo: cardSerialNumber)
+        .limit(1)
+        .get();
+    
+    if (snapshot.docs.isNotEmpty) {
+      return snapshot.docs.first.data() as Map<String, dynamic>;
+    }
+    
+    return null;
+  } catch (e) {
+    print('Error getting patient by card serial: ${e.toString()}');
+    return null;
+  }
+}
   
   // Get patient by IC (cardSerialNumber)
-  Future<Map<String, dynamic>?> getPatientByIC(String ic) async {
-    try {
-      if (ic.isEmpty) {
-        print('IC number is empty');
-        return null;
-      }
-      
-      print('Looking up patient with IC: $ic');
-      
-      // Get patient directly using IC as document ID
-      final doc = await patientsCollection.doc(ic).get();
-      
-      if (doc.exists) {
-        return doc.data() as Map<String, dynamic>;
-      }
-      
-      return null;
-    } catch (e) {
-      print('Error getting patient by IC: ${e.toString()}');
-      return null;
+ // UPDATE your database_service.dart - Add this method to properly get patient by IC:
+
+Future<Map<String, dynamic>?> getPatientByIC(String icNumber) async {
+  try {
+    print('Searching for patient with IC: $icNumber');
+    
+    // First try to find by patientId (which should be the IC number)
+    var doc = await patientsCollection.doc(icNumber).get();
+    
+    if (doc.exists && doc.data() != null) {
+      print('Patient found by document ID: ${doc.id}');
+      return doc.data() as Map<String, dynamic>;
     }
+    
+    // If not found by document ID, search by icNumber field
+    final snapshot = await patientsCollection
+        .where('icNumber', isEqualTo: icNumber)
+        .limit(1)
+        .get();
+    
+    if (snapshot.docs.isNotEmpty) {
+      print('Patient found by icNumber field: ${snapshot.docs.first.id}');
+      return snapshot.docs.first.data() as Map<String, dynamic>;
+    }
+    
+    // Also try searching by patientId field (fallback)
+    final snapshot2 = await patientsCollection
+        .where('patientId', isEqualTo: icNumber)
+        .limit(1)
+        .get();
+    
+    if (snapshot2.docs.isNotEmpty) {
+      print('Patient found by patientId field: ${snapshot2.docs.first.id}');
+      return snapshot2.docs.first.data() as Map<String, dynamic>;
+    }
+    
+    print('No patient found with IC: $icNumber');
+    return null;
+    
+  } catch (e) {
+    print('Error getting patient by IC: ${e.toString()}');
+    return null;
   }
+}
+
+// ALSO ADD this debug method to see what patients exist:
+Future<void> debugPrintAllPatients() async {
+  try {
+    final snapshot = await patientsCollection.limit(5).get();
+    print('=== DEBUG: Existing Patients ===');
+    for (var doc in snapshot.docs) {
+      final data = doc.data() as Map<String, dynamic>;
+      print('Doc ID: ${doc.id}');
+      print('Patient ID: ${data['patientId']}');
+      print('IC Number: ${data['icNumber']}');
+      print('Name: ${data['name']}');
+      print('---');
+    }
+    print('=== End Debug ===');
+  } catch (e) {
+    print('Debug error: $e');
+  }
+}
+
+// ADD these methods to your database_service.dart file:
+
+// Get appointments by patient ID
+Future<List<Map<String, dynamic>>> getAppointmentsByPatient(String patientId) async {
+  try {
+    final snapshot = await appointmentsCollection
+        .where('patientId', isEqualTo: patientId)
+        .get();
+    
+    List<Map<String, dynamic>> appointments = [];
+    
+    for (var doc in snapshot.docs) {
+      final appointmentData = doc.data() as Map<String, dynamic>;
+      
+      // Add doctor name if available
+      if (appointmentData['doctorId'] != null) {
+        try {
+          final doctorData = await getDoctorById(appointmentData['doctorId']);
+          if (doctorData != null) {
+            appointmentData['doctorName'] = doctorData['name'];
+          }
+        } catch (e) {
+          print('Error loading doctor for appointment: $e');
+        }
+      }
+      
+      appointments.add(appointmentData);
+    }
+    
+    // Sort by creation date (newest first)
+    appointments.sort((a, b) {
+      final aDate = (a['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+      final bDate = (b['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+      return bDate.compareTo(aDate);
+    });
+    
+    return appointments;
+  } catch (e) {
+    print('Error getting appointments by patient: ${e.toString()}');
+    return [];
+  }
+}
+
+
+// Enhanced patient search for better NFC support
+Future<Map<String, dynamic>?> findPatientByCardSerial(String cardSerialNumber) async {
+  try {
+    print('Searching for patient with card serial: $cardSerialNumber');
+    
+    // Search by card serial number
+    final snapshot = await patientsCollection
+        .where('cardSerialNumber', isEqualTo: cardSerialNumber)
+        .limit(1)
+        .get();
+    
+    if (snapshot.docs.isNotEmpty) {
+      final patientData = snapshot.docs.first.data() as Map<String, dynamic>;
+      print('Found patient: ${patientData['name']}');
+      return patientData;
+    }
+    
+    print('No patient found with card serial: $cardSerialNumber');
+    return null;
+    
+  } catch (e) {
+    print('Error finding patient by card serial: $e');
+    return null;
+  }
+}
 
   // Get patient by email (for login)
   Future<Map<String, dynamic>?> getPatientByEmail(String email) async {

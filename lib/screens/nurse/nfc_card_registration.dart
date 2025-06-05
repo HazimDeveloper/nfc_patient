@@ -103,41 +103,48 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
     }
   }
   
-  Future<void> _checkCardRegistration(String cardId) async {
-    try {
-      final databaseService = DatabaseService();
-      final existingPatient = await databaseService.getPatientByIC(cardId);
+ Future<void> _checkCardRegistration(String cardId) async {
+  try {
+    final databaseService = DatabaseService();
+    
+    // FIXED: Check if card is already registered
+    final cardCheck = await databaseService.checkCardRegistration(cardId);
+    
+    if (cardCheck != null && cardCheck['isRegistered'] == true) {
+      // Card is already registered - show patient details
+      final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
       
-      if (existingPatient != null) {
-        setState(() {
-          _cardId = cardId;
-          _existingPatientData = existingPatient;
-          _success = true;
-          _error = false;
-          _isScanning = false;
-          _statusMessage = 'Regular patient found';
-        });
-      } else {
-        setState(() {
-          _cardId = cardId;
-          _existingPatientData = null;
-          _success = true;
-          _error = false;
-          _isScanning = false;
-          _statusMessage = 'New patient - card available for registration';
-        });
-      }
-    } catch (e) {
       setState(() {
         _cardId = cardId;
-        _success = false;
-        _error = true;
+        _existingPatientData = existingPatient;
+        _success = true;
+        _error = false;
         _isScanning = false;
-        _statusMessage = 'Error checking patient information';
-        _errorMessage = e.toString();
+        _statusMessage = 'Regular patient found';
+      });
+    } else {
+      // Card is not registered - available for new registration
+      setState(() {
+        _cardId = cardId;
+        _existingPatientData = null;
+        _success = true;
+        _error = false;
+        _isScanning = false;
+        _statusMessage = 'New patient - card available for registration';
       });
     }
+  } catch (e) {
+    setState(() {
+      _cardId = cardId;
+      _success = false;
+      _error = true;
+      _isScanning = false;
+      _statusMessage = 'Error checking patient information';
+      _errorMessage = e.toString();
+    });
   }
+}
+
   
   void _cancelScanning() async {
     try {
@@ -254,11 +261,12 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                       ),
                       SizedBox(height: 8),
                       Text(
-                        'Scan NFC card to:\n• Register NEW patients\n• Assign doctor to REGULAR patients',
-                        textAlign: TextAlign.center,
+                        'Scan the NFC card to register or assign a doctor to a patient.',
                         style: TextStyle(
-                          fontSize: 14,
+                          fontSize: 16,
+                          color: Colors.blue[700],
                         ),
+                        textAlign: TextAlign.center,
                       ),
                     ],
                   ),
@@ -529,40 +537,7 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                 // Help text
                 if (!_isScanning) ...[
                   SizedBox(height: 32),
-                  Container(
-                    padding: EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.grey.withOpacity(0.3)),
-                    ),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Icon(Icons.help_outline, color: Colors.grey[600], size: 20),
-                            SizedBox(width: 8),
-                            Text(
-                              'How it works:',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey[800],
-                              ),
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: 8),
-                        Text(
-                          '• NEW PATIENT: Scan → Register → Assign Doctor\n'
-                          '• REGULAR PATIENT: Scan → Assign Doctor',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[700],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  
                 ],
                 
                 SizedBox(height: 50),
