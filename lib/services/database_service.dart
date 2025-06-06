@@ -159,81 +159,163 @@ class DatabaseService {
     }
   }
 
-  // ADD this new method to your database_service.dart file
-
-// SIMPLE: Register patient with IC number
-Future<Map<String, dynamic>> registerPatientWithIC({
-  required String icNumber,
-  required String name,
-  required String email,
-  required String phone,
-  required String dateOfBirth,
-  required String gender,
-  required String address,
-  String? bloodType,
-  String? emergencyContact,
-  required String cardSerialNumber,
-}) async {
-  try {
-    print('Starting patient registration with IC: $icNumber');
-    
-    // FIXED: Check if IC number already exists
-    final existingPatientByIC = await getPatientByIC(icNumber);
-    if (existingPatientByIC != null) {
-      throw Exception('IC number $icNumber is already registered to ${existingPatientByIC['name']}');
+   Future<Map<String, dynamic>> registerPatientWithIC({
+    required String icNumber,
+    required String name,
+    required String email,
+    required String phone,
+    required String dateOfBirth,
+    required String gender,
+    required String address,
+    String? bloodType,
+    String? emergencyContact,
+    required String cardSerialNumber,
+  }) async {
+    try {
+      print('Starting patient registration with IC: $icNumber');
+      
+      final cleanIcNumber = icNumber.trim();
+      
+      if (cleanIcNumber.isEmpty) {
+        throw Exception('IC number cannot be empty');
+      }
+      
+      // Check if IC number already exists (enhanced check)
+      final existingPatientByIC = await getPatientByIC(cleanIcNumber);
+      if (existingPatientByIC != null) {
+        throw Exception('IC number $cleanIcNumber is already registered to ${existingPatientByIC['name']}');
+      }
+      
+      // Check if card is already used by another patient
+      final existingPatientByCard = await _getPatientByCardSerial(cardSerialNumber);
+      if (existingPatientByCard != null) {
+        throw Exception('This NFC card is already registered to ${existingPatientByCard['name']}');
+      }
+      
+      // Use IC number as patient ID (simple and consistent)
+      final patientId = cleanIcNumber;
+      
+      final patientData = {
+        'patientId': patientId,
+        'icNumber': cleanIcNumber, // Store IC number separately for clarity
+        'name': name,
+        'email': email,
+        'phone': phone,
+        'dateOfBirth': dateOfBirth,
+        'gender': gender,
+        'address': address,
+        'bloodType': bloodType,
+        'emergencyContact': emergencyContact,
+        'allergies': [], // Empty by default
+        'medications': [], // Empty by default
+        'conditions': [], // Empty by default
+        'cardSerialNumber': cardSerialNumber,
+        'registrationDate': FieldValue.serverTimestamp(),
+        'lastUpdated': FieldValue.serverTimestamp(),
+        'currentAppointment': null,
+        'assignedDoctor': null,
+        'assignedRoom': null,
+        'status': 'registered',
+      };
+      
+      // Save to database using IC as document ID
+      await patientsCollection.doc(patientId).set(patientData);
+      
+      print('Patient registration completed: $patientId');
+      
+      return {
+        'patientId': patientId,
+        'icNumber': cleanIcNumber,
+        'name': name,
+        'dateOfBirth': dateOfBirth,
+        'cardSerialNumber': cardSerialNumber,
+        'registrationTimestamp': DateTime.now().toIso8601String(),
+      };
+      
+    } catch (e) {
+      print('Patient registration failed: ${e.toString()}');
+      rethrow;
     }
-    
-    // FIXED: Check if card is already used by another patient
-    final existingPatientByCard = await _getPatientByCardSerial(cardSerialNumber);
-    if (existingPatientByCard != null) {
-      throw Exception('This NFC card is already registered to ${existingPatientByCard['name']}');
-    }
-    
-    // Use IC number as patient ID (simple approach)
-    final patientId = icNumber;
-    
-    final patientData = {
-      'patientId': patientId,
-      'icNumber': icNumber, // Store IC number separately
-      'name': name,
-      'email': email,
-      'phone': phone,
-      'dateOfBirth': dateOfBirth,
-      'gender': gender,
-      'address': address,
-      'bloodType': bloodType,
-      'emergencyContact': emergencyContact,
-      'allergies': [], // Empty by default
-      'medications': [], // Empty by default
-      'conditions': [], // Empty by default
-      'cardSerialNumber': cardSerialNumber,
-      'registrationDate': FieldValue.serverTimestamp(),
-      'lastUpdated': FieldValue.serverTimestamp(),
-      'currentAppointment': null,
-      'assignedDoctor': null,
-      'assignedRoom': null,
-      'status': 'registered',
-    };
-    
-    // Save to database using IC as document ID
-    await patientsCollection.doc(patientId).set(patientData);
-    
-    print('Patient registration completed: $patientId');
-    
-    return {
-      'patientId': patientId,
-      'icNumber': icNumber,
-      'name': name,
-      'dateOfBirth': dateOfBirth,
-      'cardSerialNumber': cardSerialNumber,
-      'registrationTimestamp': DateTime.now().toIso8601String(),
-    };
-    
-  } catch (e) {
-    print('Patient registration failed: ${e.toString()}');
-    rethrow;
   }
-}
+
+    Future<void> addMedicationToPatient(String patientId, String medicationName) async {
+    try {
+      final patientDoc = await patientsCollection.doc(patientId).get();
+      if (!patientDoc.exists) {
+        throw Exception('Patient not found');
+      }
+      
+      final patientData = patientDoc.data() as Map<String, dynamic>;
+      List<String> currentMedications = List<String>.from(patientData['medications'] ?? []);
+      
+      if (!currentMedications.contains(medicationName)) {
+        currentMedications.add(medicationName);
+        
+        await patientsCollection.doc(patientId).update({
+          'medications': currentMedications,
+          'lastUpdated': FieldValue.serverTimestamp(),
+        });
+        
+        print('Medication added to patient: $medicationName');
+      }
+    } catch (e) {
+      print('Error adding medication to patient: ${e.toString()}');
+      rethrow;
+    }
+  }
+
+    Future<void> addConditionToPatient(String patientId, String condition) async {
+    try {
+      final patientDoc = await patientsCollection.doc(patientId).get();
+      if (!patientDoc.exists) {
+        throw Exception('Patient not found');
+      }
+      
+      final patientData = patientDoc.data() as Map<String, dynamic>;
+      List<String> currentConditions = List<String>.from(patientData['conditions'] ?? []);
+      
+      if (!currentConditions.contains(condition)) {
+        currentConditions.add(condition);
+        
+        await patientsCollection.doc(patientId).update({
+          'conditions': currentConditions,
+          'lastUpdated': FieldValue.serverTimestamp(),
+        });
+        
+        print('Condition added to patient: $condition');
+      }
+    } catch (e) {
+      print('Error adding condition to patient: ${e.toString()}');
+      rethrow;
+    }
+  }
+
+  // NEW: Remove medication from patient
+  Future<void> removeMedicationFromPatient(String patientId, String medicationName) async {
+    try {
+      final patientDoc = await patientsCollection.doc(patientId).get();
+      if (!patientDoc.exists) {
+        throw Exception('Patient not found');
+      }
+      
+      final patientData = patientDoc.data() as Map<String, dynamic>;
+      List<String> currentMedications = List<String>.from(patientData['medications'] ?? []);
+      
+      if (currentMedications.contains(medicationName)) {
+        currentMedications.remove(medicationName);
+        
+        await patientsCollection.doc(patientId).update({
+          'medications': currentMedications,
+          'lastUpdated': FieldValue.serverTimestamp(),
+        });
+        
+        print('Medication removed from patient: $medicationName');
+      }
+    } catch (e) {
+      print('Error removing medication from patient: ${e.toString()}');
+      rethrow;
+    }
+  }
 
 // FIXED: Helper method to get patient by card serial number
 Future<Map<String, dynamic>?> _getPatientByCardSerial(String cardSerialNumber) async {
@@ -254,51 +336,85 @@ Future<Map<String, dynamic>?> _getPatientByCardSerial(String cardSerialNumber) a
   }
 }
   
-  // Get patient by IC (cardSerialNumber)
- // UPDATE your database_service.dart - Add this method to properly get patient by IC:
-
-Future<Map<String, dynamic>?> getPatientByIC(String icNumber) async {
-  try {
-    print('Searching for patient with IC: $icNumber');
-    
-    // First try to find by patientId (which should be the IC number)
-    var doc = await patientsCollection.doc(icNumber).get();
-    
-    if (doc.exists && doc.data() != null) {
-      print('Patient found by document ID: ${doc.id}');
-      return doc.data() as Map<String, dynamic>;
+  Future<Map<String, dynamic>?> getPatientByIC(String icNumber) async {
+    try {
+      print('Searching for patient with IC: $icNumber');
+      
+      if (icNumber.trim().isEmpty) {
+        print('IC number is empty');
+        return null;
+      }
+      
+      final cleanIcNumber = icNumber.trim();
+      
+      // Method 1: Try to find by document ID (which should be the IC number)
+      var doc = await patientsCollection.doc(cleanIcNumber).get();
+      
+      if (doc.exists && doc.data() != null) {
+        print('Patient found by document ID: ${doc.id}');
+        final data = doc.data() as Map<String, dynamic>;
+        return data;
+      }
+      
+      // Method 2: Search by icNumber field
+      final snapshot = await patientsCollection
+          .where('icNumber', isEqualTo: cleanIcNumber)
+          .limit(1)
+          .get();
+      
+      if (snapshot.docs.isNotEmpty) {
+        print('Patient found by icNumber field: ${snapshot.docs.first.id}');
+        return snapshot.docs.first.data() as Map<String, dynamic>;
+      }
+      
+      // Method 3: Search by patientId field (fallback)
+      final snapshot2 = await patientsCollection
+          .where('patientId', isEqualTo: cleanIcNumber)
+          .limit(1)
+          .get();
+      
+      if (snapshot2.docs.isNotEmpty) {
+        print('Patient found by patientId field: ${snapshot2.docs.first.id}');
+        return snapshot2.docs.first.data() as Map<String, dynamic>;
+      }
+      
+      // Method 4: Search by cardSerialNumber (in case IC was used as card ID)
+      final snapshot3 = await patientsCollection
+          .where('cardSerialNumber', isEqualTo: cleanIcNumber)
+          .limit(1)
+          .get();
+      
+      if (snapshot3.docs.isNotEmpty) {
+        print('Patient found by cardSerialNumber field: ${snapshot3.docs.first.id}');
+        return snapshot3.docs.first.data() as Map<String, dynamic>;
+      }
+      
+      print('No patient found with IC: $cleanIcNumber');
+      return null;
+      
+    } catch (e) {
+      print('Error getting patient by IC: ${e.toString()}');
+      return null;
     }
-    
-    // If not found by document ID, search by icNumber field
-    final snapshot = await patientsCollection
-        .where('icNumber', isEqualTo: icNumber)
-        .limit(1)
-        .get();
-    
-    if (snapshot.docs.isNotEmpty) {
-      print('Patient found by icNumber field: ${snapshot.docs.first.id}');
-      return snapshot.docs.first.data() as Map<String, dynamic>;
-    }
-    
-    // Also try searching by patientId field (fallback)
-    final snapshot2 = await patientsCollection
-        .where('patientId', isEqualTo: icNumber)
-        .limit(1)
-        .get();
-    
-    if (snapshot2.docs.isNotEmpty) {
-      print('Patient found by patientId field: ${snapshot2.docs.first.id}');
-      return snapshot2.docs.first.data() as Map<String, dynamic>;
-    }
-    
-    print('No patient found with IC: $icNumber');
-    return null;
-    
-  } catch (e) {
-    print('Error getting patient by IC: ${e.toString()}');
-    return null;
   }
-}
+
+  Future<List<Map<String, dynamic>>> getAllPatientsForDebug() async {
+    try {
+      final snapshot = await patientsCollection.limit(20).get();
+      
+      List<Map<String, dynamic>> patients = [];
+      for (var doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        data['documentId'] = doc.id; // Add document ID for debugging
+        patients.add(data);
+      }
+      
+      return patients;
+    } catch (e) {
+      print('Error getting all patients: ${e.toString()}');
+      return [];
+    }
+  }
 
 // ALSO ADD this debug method to see what patients exist:
 Future<void> debugPrintAllPatients() async {
@@ -517,7 +633,7 @@ Future<Map<String, dynamic>?> findPatientByCardSerial(String cardSerialNumber) a
   }
   
   // Create or update prescription
-  Future<String> createPrescription({
+   Future<String> createPrescription({
     required String patientId,
     required String doctorId,
     required List<Map<String, dynamic>> medications,
@@ -545,11 +661,57 @@ Future<Map<String, dynamic>?> findPatientByCardSerial(String cardSerialNumber) a
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      // ADD: Update patient's current medications and conditions
+      await _updatePatientMedicalInfo(patientId, medications, diagnosis);
       
       return prescriptionId;
     } catch (e) {
       print('Error creating prescription: ${e.toString()}');
       rethrow;
+    }
+  }
+
+    Future<void> _updatePatientMedicalInfo(
+    String patientId, 
+    List<Map<String, dynamic>> medications, 
+    String diagnosis
+  ) async {
+    try {
+      // Get current patient data
+      final patientDoc = await patientsCollection.doc(patientId).get();
+      if (!patientDoc.exists) return;
+      
+      final patientData = patientDoc.data() as Map<String, dynamic>;
+      
+      // Get current medications and conditions
+      List<String> currentMedications = List<String>.from(patientData['medications'] ?? []);
+      List<String> currentConditions = List<String>.from(patientData['conditions'] ?? []);
+      
+      // Add new medications (avoid duplicates)
+      for (var medication in medications) {
+        final medicationName = medication['name'] as String;
+        if (!currentMedications.contains(medicationName)) {
+          currentMedications.add(medicationName);
+        }
+      }
+      
+      // Add diagnosis as a condition (avoid duplicates)
+      if (!currentConditions.contains(diagnosis)) {
+        currentConditions.add(diagnosis);
+      }
+      
+      // Update patient record
+      await patientsCollection.doc(patientId).update({
+        'medications': currentMedications,
+        'conditions': currentConditions,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      });
+      
+      print('Patient medical info updated: $patientId');
+    } catch (e) {
+      print('Error updating patient medical info: ${e.toString()}');
+      // Don't throw error - this is supplementary update
     }
   }
   
@@ -601,15 +763,24 @@ Future<Map<String, dynamic>?> findPatientByCardSerial(String cardSerialNumber) a
   }
   
   // Update prescription status and handle completion flow
-  Future<void> updatePrescriptionStatus(String prescriptionId, String status) async {
+   Future<void> updatePrescriptionStatus(String prescriptionId, String status) async {
     try {
+      // Get prescription data first
+      final prescriptionDoc = await prescriptionsCollection.doc(prescriptionId).get();
+      if (!prescriptionDoc.exists) {
+        throw Exception('Prescription not found');
+      }
+      
+      final prescriptionData = prescriptionDoc.data() as Map<String, dynamic>;
+      
       await prescriptionsCollection.doc(prescriptionId).update({
         'status': status,
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      
-      // If prescription is completed, check if patient should be moved to completed
+
+      // If prescription is completed, handle medication updates
       if (status == 'completed') {
+        await _handlePrescriptionCompletion(prescriptionData);
         await _checkAndMovePatientToCompleted(prescriptionId);
       }
       
@@ -620,6 +791,33 @@ Future<Map<String, dynamic>?> findPatientByCardSerial(String cardSerialNumber) a
     }
   }
   
+  Future<void> _handlePrescriptionCompletion(Map<String, dynamic> prescriptionData) async {
+    try {
+      final patientId = prescriptionData['patientId'];
+      final medications = prescriptionData['medications'] as List<dynamic>;
+      
+      // Get current patient data
+      final patientDoc = await patientsCollection.doc(patientId).get();
+      if (!patientDoc.exists) return;
+      
+      final patientData = patientDoc.data() as Map<String, dynamic>;
+      List<String> currentMedications = List<String>.from(patientData['medications'] ?? []);
+      
+      // Check if medications should be removed (completed course)
+      // For now, we'll keep them as "completed medications" for history
+      // You can modify this logic based on your requirements
+      
+      // Add completion timestamp to patient record
+      await patientsCollection.doc(patientId).update({
+        'lastPrescriptionCompleted': FieldValue.serverTimestamp(),
+        'lastUpdated': FieldValue.serverTimestamp(),
+      });
+      
+    } catch (e) {
+      print('Error handling prescription completion: ${e.toString()}');
+    }
+  }
+
   // Check if patient should be moved to completed status
   Future<void> _checkAndMovePatientToCompleted(String prescriptionId) async {
     try {

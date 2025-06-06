@@ -1,4 +1,6 @@
+// lib/screens/nurse/nfc_card_registration.dart
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_nfc_kit/flutter_nfc_kit.dart';
 import 'package:nfc_patient_registration/services/database_service.dart';
@@ -19,6 +21,10 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
   String? _cardId;
   String? _errorMessage;
   Map<String, dynamic>? _existingPatientData;
+  
+  // ADD: Debug mode for development
+  static const bool _debugMode = true; // Set to false in production
+  bool _showDebugOptions = _debugMode;
   
   late AnimationController _animationController;
   late Animation<double> _animation;
@@ -46,7 +52,35 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
     super.dispose();
   }
 
-  Future<void> _startNFCScanning() async {
+  // ENHANCED: Generate random card ID for testing
+  String _generateRandomCardId() {
+    final random = Random();
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final randomPart = random.nextInt(99999).toString().padLeft(5, '0');
+    return 'DEV${timestamp.toString().substring(8)}$randomPart';
+  }
+
+  // ENHANCED: Start NFC scanning with debug option
+  Future<void> _startNFCScanning({bool useDebugCard = false}) async {
+    if (useDebugCard && _debugMode) {
+      // Generate a random card ID for testing
+      final randomCardId = _generateRandomCardId();
+      setState(() {
+        _cardId = randomCardId;
+        _statusMessage = 'Debug card generated, checking registration...';
+        _isScanning = true;
+        _error = false;
+        _success = false;
+        _existingPatientData = null;
+        _errorMessage = null;
+      });
+      
+      // Add a small delay to simulate scanning
+      await Future.delayed(Duration(seconds: 1));
+      await _checkCardRegistration(randomCardId);
+      return;
+    }
+
     try {
       var availability = await FlutterNfcKit.nfcAvailability;
       
@@ -103,48 +137,47 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
     }
   }
   
- Future<void> _checkCardRegistration(String cardId) async {
-  try {
-    final databaseService = DatabaseService();
-    
-    // FIXED: Check if card is already registered
-    final cardCheck = await databaseService.checkCardRegistration(cardId);
-    
-    if (cardCheck != null && cardCheck['isRegistered'] == true) {
-      // Card is already registered - show patient details
-      final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
+  Future<void> _checkCardRegistration(String cardId) async {
+    try {
+      final databaseService = DatabaseService();
       
+      // Check if card is already registered
+      final cardCheck = await databaseService.checkCardRegistration(cardId);
+      
+      if (cardCheck != null && cardCheck['isRegistered'] == true) {
+        // Card is already registered - show patient details
+        final existingPatient = cardCheck['patientData'] as Map<String, dynamic>;
+        
+        setState(() {
+          _cardId = cardId;
+          _existingPatientData = existingPatient;
+          _success = true;
+          _error = false;
+          _isScanning = false;
+          _statusMessage = 'Regular patient found';
+        });
+      } else {
+        // Card is not registered - available for new registration
+        setState(() {
+          _cardId = cardId;
+          _existingPatientData = null;
+          _success = true;
+          _error = false;
+          _isScanning = false;
+          _statusMessage = 'New patient - card available for registration';
+        });
+      }
+    } catch (e) {
       setState(() {
         _cardId = cardId;
-        _existingPatientData = existingPatient;
-        _success = true;
-        _error = false;
+        _success = false;
+        _error = true;
         _isScanning = false;
-        _statusMessage = 'Regular patient found';
-      });
-    } else {
-      // Card is not registered - available for new registration
-      setState(() {
-        _cardId = cardId;
-        _existingPatientData = null;
-        _success = true;
-        _error = false;
-        _isScanning = false;
-        _statusMessage = 'New patient - card available for registration';
+        _statusMessage = 'Error checking patient information';
+        _errorMessage = e.toString();
       });
     }
-  } catch (e) {
-    setState(() {
-      _cardId = cardId;
-      _success = false;
-      _error = true;
-      _isScanning = false;
-      _statusMessage = 'Error checking patient information';
-      _errorMessage = e.toString();
-    });
   }
-}
-
   
   void _cancelScanning() async {
     try {
@@ -210,6 +243,16 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
         title: Text('NFC Patient Flow', style: TextStyle(color: Colors.white)),
         centerTitle: true,
         actions: [
+          if (_debugMode)
+            IconButton(
+              icon: Icon(Icons.bug_report),
+              onPressed: () {
+                setState(() {
+                  _showDebugOptions = !_showDebugOptions;
+                });
+              },
+              tooltip: 'Toggle Debug Options',
+            ),
           IconButton(
             icon: Icon(Icons.refresh),
             onPressed: () {
@@ -271,6 +314,50 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                     ],
                   ),
                 ),
+                
+                // ADD: Debug options for development
+                if (_showDebugOptions && _debugMode) ...[
+                  SizedBox(height: 20),
+                  Container(
+                    padding: EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.developer_mode, color: Colors.orange),
+                            SizedBox(width: 8),
+                            Text(
+                              'Developer Options',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.orange[800],
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _startNFCScanning(useDebugCard: true),
+                            icon: Icon(Icons.credit_card),
+                            label: Text('Generate Test Card'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 
                 SizedBox(height: 40),
                 
@@ -533,12 +620,6 @@ class _NFCCardRegistrationState extends State<NFCCardRegistration> with SingleTi
                       ),
                     ),
                   ),
-                
-                // Help text
-                if (!_isScanning) ...[
-                  SizedBox(height: 32),
-                  
-                ],
                 
                 SizedBox(height: 50),
               ],

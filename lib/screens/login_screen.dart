@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:nfc_patient_registration/services/auth_service.dart';
+import 'package:nfc_patient_registration/screens/debug_patient_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   @override
@@ -12,21 +13,41 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _icController = TextEditingController();
-  final _nameController = TextEditingController(); // ADDED: Name controller
+  final _nameController = TextEditingController();
 
   bool _isLoading = false;
-  bool _isLogin = true; // toggle between login and register
-  bool _isPatientLogin = false; // toggle between staff and patient login
+  bool _isLogin = true;
+  bool _isPatientLogin = false;
   String _errorMessage = '';
-  String _selectedRole = 'nurse'; // default role for registration
+  String _selectedRole = 'nurse';
+  
+  // Debug mode detection
+  static const bool _debugMode = true; // Set to false in production
+  int _debugTapCount = 0;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     _icController.dispose();
-    _nameController.dispose(); // ADDED: Dispose name controller
+    _nameController.dispose();
     super.dispose();
+  }
+
+  // Debug tap handler
+  void _handleDebugTap() {
+    if (!_debugMode) return;
+    
+    _debugTapCount++;
+    if (_debugTapCount >= 5) {
+      _debugTapCount = 0;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DebugPatientScreen(),
+        ),
+      );
+    }
   }
 
   // Toggle between login and register
@@ -34,7 +55,6 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() {
       _isLogin = !_isLogin;
       _errorMessage = '';
-      // Clear name field when switching to login
       if (_isLogin) {
         _nameController.clear();
       }
@@ -49,11 +69,11 @@ class _LoginScreenState extends State<LoginScreen> {
       _emailController.clear();
       _passwordController.clear();
       _icController.clear();
-      _nameController.clear(); // Clear name field too
+      _nameController.clear();
     });
   }
 
-  // FIXED: Handle form submission with name validation
+  // Handle form submission with better error messages
   Future<void> _submitForm() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -68,9 +88,22 @@ class _LoginScreenState extends State<LoginScreen> {
       final authService = Provider.of<AuthService>(context, listen: false);
       
       if (_isPatientLogin) {
-        // Patient login using IC number
+        // Patient login using IC number with better error handling
         print('Attempting patient login with IC: ${_icController.text.trim()}');
-        await authService.signInPatientWithIC(_icController.text.trim());
+        try {
+          await authService.signInPatientWithIC(_icController.text.trim());
+        } catch (e) {
+          // Enhanced error message for patients
+          String patientError = e.toString();
+          if (patientError.contains('Patient not found')) {
+            patientError = 'Patient not found with IC: ${_icController.text.trim()}\n\n'
+                'Please check:\n'
+                '• Your IC number is correct\n'
+                '• You have been registered by a nurse\n'
+                '• Contact the registration desk if needed';
+          }
+          throw Exception(patientError);
+        }
       } else {
         if (_isLogin) {
           // Staff login
@@ -80,12 +113,12 @@ class _LoginScreenState extends State<LoginScreen> {
             _passwordController.text,
           );
         } else {
-          // FIXED: Staff register with name
+          // Staff register with name
           print('Attempting staff registration with name: ${_nameController.text.trim()}');
           await authService.registerWithEmailAndPassword(
             _emailController.text.trim(),
             _passwordController.text,
-            _nameController.text.trim(), // ADDED: Use actual name input
+            _nameController.text.trim(),
             _selectedRole,
           );
         }
@@ -117,13 +150,16 @@ class _LoginScreenState extends State<LoginScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // App logo
-                  Hero(
-                    tag: 'logo',
-                    child: Icon(
-                      Icons.local_hospital,
-                      size: 80,
-                      color: Theme.of(context).primaryColor,
+                  // App logo with debug tap
+                  GestureDetector(
+                    onTap: _handleDebugTap,
+                    child: Hero(
+                      tag: 'logo',
+                      child: Icon(
+                        Icons.local_hospital,
+                        size: 80,
+                        color: Theme.of(context).primaryColor,
+                      ),
                     ),
                   ),
                   SizedBox(height: 24),
@@ -147,6 +183,29 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     textAlign: TextAlign.center,
                   ),
+                  
+                  // Debug indicator (only in debug mode)
+                  if (_debugMode) ...[
+                    SizedBox(height: 8),
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                      ),
+                      child: Text(
+                        'DEBUG MODE - Tap logo 5x for patient list',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.orange[700],
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
+                  
                   SizedBox(height: 32),
                   
                   // Login type toggle
@@ -264,7 +323,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ] else ...[
                     // Staff login/registration fields
                     
-                    // ADDED: Name field for registration only
+                    // Name field for registration only
                     if (!_isLogin) ...[
                       TextFormField(
                         controller: _nameController,
@@ -396,28 +455,39 @@ class _LoginScreenState extends State<LoginScreen> {
                   
                   if (!_isLogin && !_isPatientLogin) SizedBox(height: 16),
                   
-                  // Error message
+                  // Error message (Enhanced with better formatting)
                   if (_errorMessage.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 16),
                       child: Container(
-                        padding: EdgeInsets.all(12),
+                        padding: EdgeInsets.all(16),
                         decoration: BoxDecoration(
                           color: Colors.red.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: Colors.red),
                         ),
-                        child: Row(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.error, color: Colors.red, size: 20),
-                            SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                _errorMessage,
-                                style: TextStyle(
-                                  color: Colors.red,
-                                  fontSize: 14,
+                            Row(
+                              children: [
+                                Icon(Icons.error, color: Colors.red, size: 20),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Login Failed',
+                                  style: TextStyle(
+                                    color: Colors.red[800],
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
+                              ],
+                            ),
+                            SizedBox(height: 8),
+                            Text(
+                              _errorMessage,
+                              style: TextStyle(
+                                color: Colors.red[700],
+                                fontSize: 14,
                               ),
                             ),
                           ],
@@ -468,14 +538,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ],
                   
-                  // Help text for patients
+                  // Enhanced help text for patients
                   if (_isPatientLogin) ...[
                     SizedBox(height: 24),
                     Container(
-                      padding: EdgeInsets.all(12),
+                      padding: EdgeInsets.all(16),
                       decoration: BoxDecoration(
                         color: Colors.blue.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: Colors.blue.withOpacity(0.3)),
                       ),
                       child: Column(
@@ -485,7 +555,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               Icon(Icons.info, color: Colors.blue, size: 20),
                               SizedBox(width: 8),
                               Text(
-                                'Patient Information',
+                                'Patient Login Help',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   color: Colors.blue[800],
@@ -493,17 +563,59 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ],
                           ),
-                          SizedBox(height: 8),
+                          SizedBox(height: 12),
                           Text(
-                            'Enter your IC number to view your medical information and appointments. This is the same IC number you provided during registration with the nurse.',
+                            'Enter your IC number exactly as registered:\n'
+                            '• Check with registration desk if unsure\n'
+                            '• Make sure you were registered by a nurse first\n'
+                            '• IC number should be the same as on your identity card',
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: 13,
                               color: Colors.blue[700],
                             ),
                           ),
                         ],
                       ),
                     ),
+                    
+                    // Debug help for development
+                    if (_debugMode) ...[
+                      SizedBox(height: 16),
+                      Container(
+                        padding: EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.developer_mode, color: Colors.orange, size: 18),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Development Mode',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.orange[800],
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: 8),
+                            Text(
+                              'Tap the hospital logo 5 times to see all registered patients and their IC numbers for testing.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.orange[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ],
                   
                   // Registration help text for staff
