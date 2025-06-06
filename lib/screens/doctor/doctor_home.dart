@@ -107,17 +107,31 @@ class _DoctorHomeState extends State<DoctorHome> with SingleTickerProviderStateM
     }
   }
 
-  void _handleNFCScan() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => EnhancedNFCPatientScanner(
-          userRole: 'doctor',
-          userId: _currentDoctorId,
-          userName: _doctorInfo?['name'] ?? 'Doctor',
+ void _handleNFCScan() {
+    // Simple fix: only navigate if we have a valid doctor ID
+    final doctorId = _currentDoctorId;
+    final doctorName = _doctorInfo?['name'] ?? 'Doctor';
+    
+    if (doctorId != null && doctorId.isNotEmpty) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => EnhancedNFCPatientScanner(
+            userRole: 'doctor',
+            userId: doctorId, // Now guaranteed to be non-null
+            userName: doctorName,
+          ),
         ),
-      ),
-    ).then((_) => _loadPatients());
+      ).then((_) => _loadPatients());
+    } else {
+      // Show error if no doctor ID
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: Doctor ID not found. Please try logging in again.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   Future<void> _completePatient(String patientId) async {
