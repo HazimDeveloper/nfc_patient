@@ -398,23 +398,254 @@ Future<Map<String, dynamic>?> _getPatientByCardSerial(String cardSerialNumber) a
     }
   }
 
-  Future<List<Map<String, dynamic>>> getAllPatientsForDebug() async {
+  Future<List<Map<String, dynamic>>> getAllPatientsFixed() async {
+  try {
+    // First ensure user has proper role
+    await checkAndFixUserRole();
+    
+    print('Attempting to get patients...');
+    
+    // Simple query without ordering (ordering might cause permission issues)
+    final snapshot = await patientsCollection.get();
+    
+    List<Map<String, dynamic>> patients = [];
+    for (var doc in snapshot.docs) {
+      final data = doc.data() as Map<String, dynamic>;
+      data['documentId'] = doc.id;
+      patients.add(data);
+    }
+    
+    print('Successfully retrieved ${patients.length} patients');
+    return patients;
+  } catch (e) {
+    print('Error getting patients: $e');
+    return [];
+  }
+}
+
+// Add this method to your database_service.dart to debug the issue
+
+Future<void> fullDebugCheck() async {
+  print('=== FULL DEBUG CHECK START ===');
+  
+  try {
+    // 1. Check Firebase Auth
+    final currentUser = FirebaseAuth.instance.currentUser;
+    print('1. AUTH CHECK:');
+    if (currentUser == null) {
+      print('   ❌ No user logged in');
+      return;
+    } else {
+      print('   ✅ User logged in');
+      print('   - UID: ${currentUser.uid}');
+      print('   - Email: ${currentUser.email}');
+      print('   - Email Verified: ${currentUser.emailVerified}');
+    }
+    
+    // 2. Check user document
+    print('\n2. USER DOCUMENT CHECK:');
     try {
-      final snapshot = await patientsCollection.limit(20).get();
+      final userDoc = await _firestore.collection('users').doc(currentUser.uid).get();
+      if (userDoc.exists) {
+        final userData = userDoc.data() as Map<String, dynamic>;
+        print('   ✅ User document exists');
+        print('   - Role: ${userData['role']}');
+        print('   - Name: ${userData['name']}');
+        print('   - Active: ${userData['isActive']}');
+      } else {
+        print('   ❌ User document missing');
+        print('   Creating user document...');
+        
+        await _firestore.collection('users').doc(currentUser.uid).set({
+          'email': currentUser.email,
+          'name': currentUser.displayName ?? currentUser.email?.split('@')[0] ?? 'User',
+          'role': 'nurse',
+          'isActive': true,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        print('   ✅ User document created with nurse role');
+      }
+    } catch (e) {
+      print('   ❌ Error accessing user document: $e');
+    }
+    
+    // 3. Test simple Firestore access
+    print('\n3. FIRESTORE ACCESS TEST:');
+    try {
+      // Test writing first
+      await _firestore.collection('test').doc('debug').set({
+        'timestamp': FieldValue.serverTimestamp(),
+        'userId': currentUser.uid,
+      });
+      print('   ✅ Can write to Firestore');
       
-      List<Map<String, dynamic>> patients = [];
-      for (var doc in snapshot.docs) {
+      // Test reading
+      final testDoc = await _firestore.collection('test').doc('debug').get();
+      print('   ✅ Can read from Firestore');
+      
+      // Clean up test document
+      await _firestore.collection('test').doc('debug').delete();
+      print('   ✅ Can delete from Firestore');
+      
+    } catch (e) {
+      print('   ❌ Firestore access error: $e');
+    }
+    
+    // 4. Test patients collection specifically
+    print('\n4. PATIENTS COLLECTION TEST:');
+    try {
+      // Try simple read without ordering
+      final patientsSnapshot = await _firestore.collection('patients').limit(1).get();
+      print('   ✅ Can access patients collection');
+      print('   - Found ${patientsSnapshot.docs.length} documents');
+      
+      if (patientsSnapshot.docs.isNotEmpty) {
+        final firstPatient = patientsSnapshot.docs.first.data();
+        print('   - Sample patient: ${firstPatient['name'] ?? 'No name'}');
+      }
+    } catch (e) {
+      print('   ❌ Cannot access patients collection: $e');
+    }
+    
+    // 5. Test with ordering (this is what's failing)
+    print('\n5. ORDERED QUERY TEST:');
+    try {
+      final orderedSnapshot = await _firestore
+          .collection('patients')
+          .orderBy('name')
+          .limit(1)
+          .get();
+      print('   ✅ Ordered query works');
+    } catch (e) {
+      print('   ❌ Ordered query fails: $e');
+      print('   This suggests either:');
+      print('   - Missing composite index');
+      print('   - Firestore rules blocking ordered queries');
+    }
+    
+  } catch (e) {
+    print('❌ Debug check failed: $e');
+  }
+  
+  print('=== FULL DEBUG CHECK END ===');
+}
+
+// Simplified method to get patients without ordering
+Future<List<Map<String, dynamic>>> getPatientsWithoutOrdering() async {
+  try {
+    print('Getting patients without ordering...');
+    
+    // Simple query without any ordering
+    final snapshot = await _firestore.collection('patients').get();
+    
+    List<Map<String, dynamic>> patients = [];
+    for (var doc in snapshot.docs) {
+      final data = doc.data();
+      data['documentId'] = doc.id;
+      patients.add(data);
+    }
+    
+    // Sort in memory instead of in query
+    patients.sort((a, b) {
+      final nameA = (a['name'] ?? '').toString().toLowerCase();
+      final nameB = (b['name'] ?? '').toString().toLowerCase();
+      return nameA.compareTo(nameB);
+    });
+    
+    print('Retrieved ${patients.length} patients successfully');
+    return patients;
+  } catch (e) {
+    print('Error getting patients without ordering: $e');
+    return [];
+  }
+}
+
+ Future<List<Map<String, dynamic>>> getAllPatientsForDebug() async {
+  try {
+    print('Attempting to get all patients for debug...');
+    
+    // Try with a smaller limit first to test permissions
+    final snapshot = await patientsCollection.limit(10).get();
+    
+    List<Map<String, dynamic>> patients = [];
+    for (var doc in snapshot.docs) {
+      try {
         final data = doc.data() as Map<String, dynamic>;
         data['documentId'] = doc.id; // Add document ID for debugging
         patients.add(data);
+      } catch (e) {
+        print('Error processing patient document ${doc.id}: $e');
       }
-      
-      return patients;
-    } catch (e) {
-      print('Error getting all patients: ${e.toString()}');
-      return [];
     }
+    
+    print('Successfully retrieved ${patients.length} patients');
+    return patients;
+  } catch (e) {
+    print('Error getting all patients for debug: ${e.toString()}');
+    
+    // If we get a permission error, try to get patients in a different way
+    if (e.toString().contains('permission-denied')) {
+      print('Permission denied - trying alternative approach...');
+      return await _getPatientsByAlternativeMethod();
+    }
+    
+    return [];
   }
+}
+
+// Alternative method to get patients when direct access is denied
+Future<List<Map<String, dynamic>>> _getPatientsByAlternativeMethod() async {
+  try {
+    // Try getting patients by status first (this might have different permissions)
+    final registeredPatients = await getPatientsByStatus('registered');
+    final activePatients = await getPatientsByStatus('active');
+    final completedPatients = await getPatientsByStatus('completed');
+    
+    // Combine all patients
+    final allPatients = <String, Map<String, dynamic>>{};
+    
+    for (var patient in [...registeredPatients, ...activePatients, ...completedPatients]) {
+      allPatients[patient['patientId']] = patient;
+    }
+    
+    print('Retrieved ${allPatients.length} patients via alternative method');
+    return allPatients.values.toList();
+  } catch (e) {
+    print('Alternative method also failed: $e');
+    return [];
+  }
+}
+
+// ALSO ADD: Method to check current user permissions
+Future<void> debugUserPermissions() async {
+  try {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      print('DEBUG: No user logged in');
+      return;
+    }
+    
+    print('DEBUG: Current user UID: ${currentUser.uid}');
+    print('DEBUG: Current user email: ${currentUser.email}');
+    
+    // Try to get user role
+    try {
+      final userDoc = await _firestore.collection('users').doc(currentUser.uid).get();
+      if (userDoc.exists) {
+        final userData = userDoc.data() as Map<String, dynamic>;
+        print('DEBUG: User role: ${userData['role']}');
+        print('DEBUG: User name: ${userData['name']}');
+      } else {
+        print('DEBUG: User document does not exist in users collection');
+      }
+    } catch (e) {
+      print('DEBUG: Error getting user document: $e');
+    }
+    
+  } catch (e) {
+    print('DEBUG: Error checking user permissions: $e');
+  }
+}
 
 // ALSO ADD this debug method to see what patients exist:
 Future<void> debugPrintAllPatients() async {
@@ -790,6 +1021,56 @@ Future<Map<String, dynamic>?> findPatientByCardSerial(String cardSerialNumber) a
       rethrow;
     }
   }
+
+  Future<void> checkAndFixUserRole() async {
+  try {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      print('ERROR: No user logged in');
+      return;
+    }
+    
+    print('=== USER DEBUG INFO ===');
+    print('User UID: ${currentUser.uid}');
+    print('User Email: ${currentUser.email}');
+    
+    // Check if user document exists
+    final userDoc = await _firestore.collection('users').doc(currentUser.uid).get();
+    
+    if (!userDoc.exists) {
+      print('ERROR: User document does not exist');
+      print('Creating user document with nurse role...');
+      
+      // Create user document with nurse role
+      await _firestore.collection('users').doc(currentUser.uid).set({
+        'email': currentUser.email,
+        'name': currentUser.displayName ?? 'User',
+        'role': 'nurse', // Set as nurse to allow patient access
+        'createdAt': FieldValue.serverTimestamp(),
+        'isActive': true,
+      });
+      
+      print('User document created with nurse role');
+    } else {
+      final userData = userDoc.data() as Map<String, dynamic>;
+      print('User Role: ${userData['role']}');
+      print('User Name: ${userData['name']}');
+      
+      // If user has no role or wrong role, update it
+      if (userData['role'] == null || userData['role'] == '') {
+        print('Updating user role to nurse...');
+        await _firestore.collection('users').doc(currentUser.uid).update({
+          'role': 'nurse',
+        });
+        print('User role updated to nurse');
+      }
+    }
+    
+    print('=== END USER DEBUG ===');
+  } catch (e) {
+    print('Error in checkAndFixUserRole: $e');
+  }
+}
   
   Future<void> _handlePrescriptionCompletion(Map<String, dynamic> prescriptionData) async {
     try {

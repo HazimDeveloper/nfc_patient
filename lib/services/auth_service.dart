@@ -67,42 +67,63 @@ class AuthService with ChangeNotifier {
     }
   }
   
-  Future<void> signInPatientWithIC(String icNumber) async {
-  try {
-    _clearCache(); // Clear cache before sign in
-    
-    // FIXED: Use getPatientByIC instead of getPatientByCardSerial
-    final patientData = await _databaseService.getPatientByIC(icNumber);
-    
-    if (patientData == null) {
-      throw Exception('Patient not found. Please check your IC number or contact the hospital registration desk.');
+   Future<void> signInPatientWithIC(String icNumber) async {
+    try {
+      _clearCache(); // Clear cache before sign in
+      
+      if (icNumber.trim().isEmpty) {
+        throw Exception('Please enter your IC number.');
+      }
+      
+      final cleanIcNumber = icNumber.trim();
+      print('Attempting patient login with IC: $cleanIcNumber');
+      
+      // Enhanced search using the improved getPatientByIC method
+      final patientData = await _databaseService.getPatientByIC(cleanIcNumber);
+      
+      if (patientData == null) {
+        // Try to debug - get all patients to see what's in the database
+        print('Patient not found. Checking database...');
+        final allPatients = await _databaseService.getAllPatientsForDebug();
+        print('Total patients in database: ${allPatients.length}');
+        
+        for (var patient in allPatients.take(5)) {
+          print('Patient: ${patient['name']} - IC: ${patient['icNumber']} - PatientID: ${patient['patientId']} - Doc ID: ${patient['documentId']}');
+        }
+        
+        throw Exception('Patient not found. Please check your IC number or contact the hospital registration desk.\n\nIf you just registered, please make sure your IC number is exactly: $cleanIcNumber');
+      }
+      
+      print('Patient found: ${patientData['name']} (IC: ${patientData['icNumber']})');
+      
+      // Create a temporary user session for patient
+      try {
+        await _firestore.collection('patient_sessions').doc(cleanIcNumber).set({
+          'patientId': cleanIcNumber,
+          'loginTime': FieldValue.serverTimestamp(),
+          'isActive': true,
+          'patientName': patientData['name'],
+        });
+      } catch (sessionError) {
+        print('Warning: Could not create session document: $sessionError');
+        // Continue anyway - the local session is more important
+      }
+      
+      // Store patient session locally
+      _currentPatientSession = {
+        'patientId': cleanIcNumber,
+        'isPatient': true,
+        'loginTime': DateTime.now(),
+        'patientData': patientData, // Store patient data for easy access
+      };
+      
+      print('Patient session created successfully for: ${patientData['name']}');
+      notifyListeners();
+    } catch (e) {
+      print('Error signing in patient: ${e.toString()}');
+      rethrow;
     }
-    
-    print('Patient found with IC: $icNumber');
-    print('Patient data: ${patientData['name']}');
-    
-    // Create a temporary user session for patient
-    await _firestore.collection('patient_sessions').doc(icNumber).set({
-      'patientId': icNumber,
-      'loginTime': FieldValue.serverTimestamp(),
-      'isActive': true,
-    });
-    
-    // Store patient session locally
-    _currentPatientSession = {
-      'patientId': icNumber,
-      'isPatient': true,
-      'loginTime': DateTime.now(),
-      'patientData': patientData, // Store patient data for easy access
-    };
-    
-    print('Patient session created successfully');
-    notifyListeners();
-  } catch (e) {
-    print('Error signing in patient: ${e.toString()}');
-    rethrow;
   }
-}
   
   // Register with email and password
   Future<User?> registerWithEmailAndPassword(
